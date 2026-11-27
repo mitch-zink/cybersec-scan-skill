@@ -1,4 +1,4 @@
-"""Tests for scripts/cyber_state.py. Run: python3 -m unittest discover -s tests -v"""
+"""Tests for scripts/cyber_state.py. Run: python3 tests/test_cyber_state.py -v"""
 import contextlib
 import io
 import json

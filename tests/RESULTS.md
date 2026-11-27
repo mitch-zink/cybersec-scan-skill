@@ -1,6 +1,6 @@
 # Test results (2026-11-27)
 
-Unit tests: `python3 -m unittest discover -s tests -v` → 15 passed.
+Unit tests: `python3 tests/test_cyber_state.py -v` → 15 passed.
 
 ## Acceptance criteria
 
