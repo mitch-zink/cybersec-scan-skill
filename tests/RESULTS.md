@@ -38,5 +38,7 @@ Repo-specific finding details are not recorded here. This repo is public.
 | Incremental marked a dropped finding "fixed" | FOUND and FIXED in this build | Merge treated any missing finding in a read file as fixed. | Fixed status now requires the exact evidence text to be gone from the file. Two unit tests added. |
 | Partial FULL state saved | FOUND and FIXED in this build (job-bot, ai-brain runs) | Agent read a fraction of files and saved state. | Helper refuses FULL over 150 files and refuses any save where read count differs from file count. |
 | Read count is self-reported | KNOWN LIMIT | The helper cannot see which files the agent opened. | v1.1: log file reads. Coverage lists each file read. |
-| Real-run confirmation of the 06:00 trigger | NOT YET | The daily job first fires at the next 06:00. | Check `~/Library/Logs/cybersec-scan.log` on 2026-11-28. |
-| Full scan of job-bot | NOT RUN | 3986 files exceed the cap. | Run from a folder of 150 files or fewer. |
+| launchd run | PASS outside ~/Documents (kickstart: START, OK, exit 0) | macOS blocks launchd from reading ~/Documents (exit 126, "Operation not permitted"). | Runner now lives in ~/.local/share/cybersec-scan. Owner must grant Full Disk Access to /bin/bash for ~/Documents repos. |
+| 06:00 trigger itself | NOT YET OBSERVED | First scheduled fire is 2026-11-28 06:00. | Check the log that morning. |
+| Full scan of job-bot | NOT RUN | 3986 files exceed the 150-file cap. | Decision needed: raise the cap, or add batched FULL runs. |
+| PR CI on push | PARTIAL | The pull_request run did not start for pushes to the feature branch. The unit job passed on the same commit via workflow_dispatch. | Investigate workflow trigger; manual dispatch used. |

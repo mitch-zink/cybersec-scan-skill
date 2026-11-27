@@ -40,5 +40,6 @@ It can also write a patch for each issue. You review and apply each patch yourse
 
 - FULL scans refuse folders over 150 files. Run from a smaller folder.
 - A partial FULL scan is never saved as state.
+- macOS: launchd cannot read `~/Documents`. Grant Full Disk Access to `/bin/bash` (System Settings, Privacy and Security) before the daily job can scan repos there.
 - Add `.cybersec/` to the `.gitignore` of every scanned repo. The skill writes its output there.
 - Finding IDs can change between runs when the wording of the evidence changes. See `tests/RESULTS.md`.
