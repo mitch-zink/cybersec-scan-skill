@@ -8,8 +8,10 @@ echo "linked $SKILLS/cybersec-scan -> $REPO"
 if [ "${1:-}" = "--daily" ]; then
   CLAUDE_BIN="$(command -v claude)"; CLAUDE_DIR="$(dirname "$CLAUDE_BIN")"
   PLIST="$HOME/Library/LaunchAgents/com.cybersec-scan.daily.plist"
-  mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.config/cybersec-scan"
-  sed -e "s|__REPO__|$REPO|g" -e "s|__HOME__|$HOME|g" -e "s|__CLAUDE_DIR__|$CLAUDE_DIR|g" \
+  RUNNER_DIR="$HOME/.local/share/cybersec-scan"   # outside ~/Documents: launchd cannot read it
+  mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.config/cybersec-scan" "$RUNNER_DIR"
+  cp "$REPO/scripts/run-daily.sh" "$RUNNER_DIR/run-daily.sh"
+  sed -e "s|__RUNNER__|$RUNNER_DIR/run-daily.sh|g" -e "s|__HOME__|$HOME|g" -e "s|__CLAUDE_DIR__|$CLAUDE_DIR|g" \
     "$REPO/launchd/com.cybersec-scan.daily.plist" > "$PLIST"
   launchctl bootout "gui/$(id -u)/com.cybersec-scan.daily" 2>/dev/null || true
   launchctl bootstrap "gui/$(id -u)" "$PLIST"
