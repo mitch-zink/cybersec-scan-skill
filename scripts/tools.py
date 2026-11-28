@@ -2,6 +2,7 @@
 Each *_findings returns (status, findings); status is ran | missing | timeout | error.
 Secret values are never stored: gitleaks runs with --redact and only rule, file, line are kept."""
 import hashlib
+import re
 import html as H
 import json
 import os
@@ -115,19 +116,51 @@ def osv_findings(root, cfg):
                 fixed = _fixed(vulns, name)
                 out.append({"source": "osv", "owasp": "A03", "class": cls, "severity": sev, "confidence": conf,
                             "scope": lockscope.scope(pathlib.Path(root, rp), name), "file": rp, "lines": "-",
-                            "evidence": f"{name}@{ver} {cls}", "fp": f"{name}|{cls}",
-                            "fix_hint": f"Upgrade {name} from {ver}." + (f" Fixed in: {', '.join(fixed)}." if fixed else " No fixed version listed."),
+                            "pkg": name, "ver": ver, "fixed": fixed,
                             "summary": next((v.get("summary", "") for v in vulns if v.get("summary")), "")})
     if cfg.get("osv_enrich", True):
         enrich.apply(out)
-    return "ran", out
+    return "ran", by_package(out)
+
+
+def _vkey(v):
+    return tuple(int(x) if x.isdigit() else 0 for x in re.split(r"[.\-+]", v))
+
+
+def by_package(advisories):
+    """One finding per lockfile + package@version: worst advisory first, one upgrade target that fixes all."""
+    groups = {}
+    for a in advisories:
+        groups.setdefault((a["file"], a["pkg"], a["ver"]), []).append(a)
+    out = []
+    for (rp, name, ver), items in groups.items():
+        items.sort(key=lambda a: (SEV_ORDER.index(a["severity"]), not a.get("kev"), -float(a.get("epss") or 0)))
+        # each advisory: the lowest fixed version above the installed one (stays on the same release line)
+        for a in items:
+            up = [x for x in a["fixed"] if _vkey(x) > _vkey(ver)]
+            a["fix"] = min(up, key=_vkey) if up else None
+        fixes = [a["fix"] for a in items if a["fix"]]
+        top = items[0]
+        target = max(fixes, key=_vkey) if fixes else None
+        per = "; ".join(f"{a['class']} {a['fix'] or 'no fix'}" for a in items[:8])
+        out.append({"source": "osv", "owasp": "A03", "class": top["class"], "severity": top["severity"],
+                    "confidence": top["confidence"], "scope": top["scope"], "file": rp, "lines": "-",
+                    "kev": any(a.get("kev") for a in items), "epss": max((a.get("epss") or 0) for a in items) or None,
+                    "evidence": f"{name}@{ver}: {len(items)} advisor{'y' if len(items) == 1 else 'ies'} "
+                                f"({', '.join(a['class'] for a in items[:5])}{', ...' if len(items) > 5 else ''})",
+                    "fp": f"{name}|{rp}",
+                    "fix_hint": (f"Upgrade {name} from {ver} to {target} (fixes all {len(items)})." if target and len(fixes) == len(items)
+                                 else f"Upgrade {name} from {ver}" + (f" to at least {target}." if target else "; no fixed version listed."))
+                                + f" Per advisory: {per}.",
+                    "advisories": [{k: a.get(k) for k in ("class", "severity", "fixed", "kev", "epss", "summary")} for a in items]})
+    return out
 
 
 def gitleaks_findings(root, cfg, history):
     """Secrets. history=False: current files. history=True: git history (source gitleaks-history)."""
     conf = config.gitleaks_config(root, cfg)
     st, data = _call("gitleaks", ["gitleaks", "git" if history else "dir", str(root), "-c", conf, "--redact",
-                                  "--no-banner", "-f", "json"], "-r", cfg,
+                                  "--no-banner", "-f", "json", "--max-target-megabytes", str(cfg.get("secret_max_mb", 1))], "-r", cfg,
                      "gitleaks_history" if history else "gitleaks", (0, 1))
     if st != "ran":
         return st, []
@@ -138,7 +171,7 @@ def gitleaks_findings(root, cfg, history):
         rp = rel(root, f.get("File", "?"))
         if config.secret_skipped(rp, cfg):
             continue
-        out.append({"source": src, "owasp": "A02", "class": "CWE-798", "severity": "high",
+        out.append({"source": src, "rule": f.get("RuleID", ""), "owasp": "A02", "class": "CWE-798", "severity": "high",
                     "confidence": "confirmed", "scope": scope, "file": rp,
                     "lines": f"{f.get('StartLine', '?')}-{f.get('EndLine', '?')}",
                     "evidence": f"{f.get('RuleID', 'secret')} {rp}:{f.get('StartLine', '?')}",
@@ -210,7 +243,8 @@ def zizmor_findings(root, cfg):
 
 
 def parse_zizmor(root, items):
-    out = []
+    """One finding per audit and file; lines lists every occurrence."""
+    out = {}
     for x in items:
         d = x.get("determinations", {})
         sev = {"High": "high", "Medium": "medium", "Low": "low", "Unknown": "low"}.get(d.get("severity"))
@@ -220,12 +254,18 @@ def parse_zizmor(root, items):
         rp = rel(root, loc["symbolic"]["key"].get("Local", {}).get("verbatim_path", "?")).removeprefix("./")
         line = loc["concrete"]["location"]["start_point"]["row"] + 1          # json-v1 rows are 0-based
         feat = loc["concrete"].get("feature", "").strip()[:200]
-        out.append({"source": "zizmor", "owasp": "A03", "class": x["ident"], "severity": sev,
-                    "confidence": "confirmed" if d.get("confidence") == "High" else "likely", "scope": "current",
-                    "file": rp, "lines": str(line), "evidence": feat or x["ident"],
-                    "fp": f"{x['ident']}|{rp}|{hashlib.sha1(feat.encode()).hexdigest()}",
-                    "fix_hint": f"{x.get('desc', '')}. See {x.get('url', '')}"})
-    return out
+        g = out.setdefault((x["ident"], rp), {"source": "zizmor", "owasp": "A03", "class": x["ident"], "severity": sev,
+                                              "confidence": "likely", "scope": "current", "file": rp, "rows": [],
+                                              "fp": f"{x['ident']}|{rp}", "fix_hint": f"{x.get('desc', '')}. See {x.get('url', '')}"})
+        g["rows"].append((line, feat or x["ident"]))
+        g["severity"] = min(g["severity"], sev, key=SEV_ORDER.index)
+        if d.get("confidence") == "High":
+            g["confidence"] = "confirmed"
+    for g in out.values():
+        rows = sorted(set(g.pop("rows")))
+        g["lines"] = ", ".join(str(r[0]) for r in rows[:12]) + (" ..." if len(rows) > 12 else "")
+        g["evidence"] = rows[0][1] + (f" (+{len(rows) - 1} more in this file)" if len(rows) > 1 else "")
+    return list(out.values())
 
 
 def trivy_findings(root, cfg):

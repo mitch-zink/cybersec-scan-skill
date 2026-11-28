@@ -4,7 +4,7 @@
 |---|---|---|
 | Unit | `python3 tests/test_cyber_state.py` | 22 passed |
 | Regressions (20 v2 defects) | `python3 tests/test_regressions.py` | 21 passed (20 v2 defects, all failed on v2, plus agent-output checks) |
-| v3 steps | `python3 tests/test_v3.py` | 33 passed |
+| v3 steps | `python3 tests/test_v3.py` | 35 passed |
 | Bench gates | `python3 scripts/bench.py` | 9 of 9 true |
 | AI bench | `python3 scripts/bench.py --ai` | recall 10 of 10, 0 false alarms in 6 safe twins |
 
@@ -35,3 +35,14 @@
 | - | Read-only commands wrote `.cybersec/config.toml` | Only `tools` writes; `.cybersec/` ignores itself |
 
 Repo-specific finding details are not recorded here. This repo is public.
+
+## Dogfood round 2 (job-bot clone, tools only, no AI cost)
+
+| Change | Before | After |
+|---|---|---|
+| OSV: one finding per package version, one upgrade target on the same release line | 98 | 33 |
+| Zizmor: one finding per audit and file | 149 | 85 |
+| Secrets: history copy dropped when the key is still in current files; test files skipped | 26 + 50 | 23 + 22 |
+| Semgrep: `ssrf-request-py` pattern replaced by taint rule `taint-ssrf-py` | 28 | 13 |
+| `tools` wall time: gitleaks reads files up to 1 MB; scanners run in parallel | 279 s | 82 s |
+| Tool findings total | 390 | 215 |

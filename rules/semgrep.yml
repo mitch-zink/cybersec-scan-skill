@@ -56,17 +56,26 @@ rules:
     message: File path built from input. Check it stays inside the base folder.
     metadata: {cwe: CWE-22, owasp: A01, fix: "Resolve the path and check it starts with the base folder."}
     pattern: open(os.path.join($B, $X), ...)
-  - id: ssrf-request-py
+  - id: taint-ssrf-py
+    mode: taint
     languages: [python]
     severity: WARNING
-    message: Outbound request to a URL that is not a literal. Check the host allowlist.
+    message: Request data sets the URL of an outbound request. Check the host allowlist.
     metadata: {cwe: CWE-918, owasp: A01, fix: "Allow only known hosts. Block private address ranges."}
-    patterns:
+    pattern-sources:
       - pattern-either:
-          - pattern: requests.$M($URL, ...)
-          - pattern: urllib.request.urlopen($URL, ...)
-      - pattern-not: requests.$M("...", ...)
-      - pattern-not: urllib.request.urlopen("...", ...)
+          - pattern: request.args
+          - pattern: request.form
+          - pattern: request.values
+          - pattern: request.get_json(...)
+          - pattern: request.json
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: requests.$M($U, ...)
+              - pattern: urllib.request.urlopen($U, ...)
+              - pattern: httpx.$M($U, ...)
+          - focus-metavariable: $U
   - id: weak-hash-py
     languages: [python]
     severity: WARNING

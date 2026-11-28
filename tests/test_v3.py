@@ -210,13 +210,15 @@ class OsvTests(unittest.TestCase):
 
     def test_osv_groups(self):
         found, data = self.osv()
-        groups = sum(len(p["groups"]) for r in data["results"] for p in r["packages"])
-        sevs = {f["class"]: f["severity"] for f in found}
-        self.assertEqual(len(found), groups)            # no group is low in this fixture
-        self.assertEqual(sevs["CVE-2018-18074"], "high")
-        self.assertEqual({f["scope"] for f in found if f["evidence"].startswith("requests")}, {"prod"})
-        self.assertEqual({f["scope"] for f in found if f["evidence"].startswith("pyyaml")}, {"dev"})
-        self.assertTrue(all(f["fp"].count("|") == 1 for f in found))
+        by = {f["evidence"].split("@")[0]: f for f in found}
+        self.assertEqual(sorted(by), ["pyyaml", "requests"])                 # one finding per package@version
+        r = by["requests"]
+        self.assertEqual((r["class"], r["severity"], r["scope"]), ("CVE-2018-18074", "high", "prod"))
+        self.assertEqual(len(r["advisories"]), 5)
+        self.assertIn("to 2.33.0 (fixes all 5)", r["fix_hint"])
+        self.assertEqual((by["pyyaml"]["severity"], by["pyyaml"]["scope"]), ("critical", "dev"))
+        self.assertIn("to 5.4 ", by["pyyaml"]["fix_hint"])
+        self.assertEqual(r["fp"], "requests|poetry.lock")
 
     def test_lockscope_poetry(self):
         import lockscope
@@ -256,6 +258,19 @@ class SideEffectTests(Fixture):
         run_cli("tools", self.repo, "--no-history")
         st = subprocess.run(["git", "status", "--porcelain"], cwd=self.repo, capture_output=True, text=True).stdout
         self.assertEqual(st, "")
+
+
+class SecretNoiseTests(Fixture):
+    def test_secret_in_test_file_skipped_and_history_duplicate_dropped(self):
+        import config
+        self.assertEqual(config.secret_skipped("src/lib/a.test.ts", {"skip_tests": True}), "skip-name")
+        self.assertIsNone(config.secret_skipped("src/lib/a.test.ts", {"skip_tests": False}))
+        if not shutil.which("gitleaks"):
+            self.skipTest("gitleaks not installed")
+        run_cli("tools", self.repo)                       # app/secrets.py key is in current files and history
+        lf = json.loads(pathlib.Path(self.repo, ".cybersec/last_findings.json").read_text())
+        srcs = [f["source"] for f in lf if f["file"] == "app/secrets.py" and f["class"] == "CWE-798"]
+        self.assertEqual(srcs, ["gitleaks"])
 
 
 class BatchTests(Fixture):
@@ -390,6 +405,15 @@ class ScannerParseTests(unittest.TestCase):
         self.assertEqual([(x["class"], x["severity"], x["file"], x["lines"]) for x in f],
                          [("template-injection", "high", ".github/workflows/bad.yml", "10")])
         self.assertIn("github.event.issue.title", f[0]["evidence"])
+
+    def test_zizmor_groups_per_file(self):
+        item = json.loads((DATA / "zizmor.json").read_text())[0]
+        two = [item, json.loads(json.dumps(item))]
+        two[1]["locations"][0]["concrete"]["location"]["start_point"]["row"] = 20
+        f = tools.parse_zizmor("/repo", two)
+        self.assertEqual(len(f), 1)
+        self.assertEqual(f[0]["lines"], "10, 21")
+        self.assertIn("(+1 more in this file)", f[0]["evidence"])
 
     def test_trivy_parse(self):
         f = tools.parse_trivy("/repo", json.loads((DATA / "trivy.json").read_text()))

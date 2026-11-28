@@ -11,7 +11,7 @@ ALWAYS_DIRS = VENDOR_DIRS + ["docs", "plans", "examples", ".claude"]
 ALWAYS_GLOBS = ["*.md", "CLAUDE.md", "seed*", "*.lock", "*.min.js"]
 SECRET_SKIP_GLOBS = ["*.min.js", "*.lock", "package-lock.json", "pnpm-lock.yaml"]
 
-DEFAULT = {"skip_tests": True, "osv_enrich": True,
+DEFAULT = {"skip_tests": True, "osv_enrich": True, "secret_max_mb": 1,
            "timeout_osv": 600, "timeout_gitleaks": 600, "timeout_gitleaks_history": 1800,
            "timeout_semgrep": 900, "timeout_zizmor": 300, "timeout_trivy": 600,
            "sql": {"public_default_grants": True},
@@ -45,7 +45,8 @@ def vendor_skipped(rel, cfg):
 
 def secret_skipped(rel, cfg):
     """Secrets scan: vendored code, minified JS and lockfiles. Docs, markdown and seeds are scanned."""
-    return vendor_skipped(rel, cfg) or ("skip-name" if _name_match(rel, SECRET_SKIP_GLOBS) else None)
+    globs = SECRET_SKIP_GLOBS + (TEST_GLOBS if cfg["skip_tests"] else [])
+    return vendor_skipped(rel, cfg) or ("skip-name" if _name_match(rel, globs) else None)
 
 
 def ensure_dir(root):
@@ -77,7 +78,8 @@ def glob_to_re(g):
 
 def gitleaks_config(root, cfg):
     """Write .cybersec/gitleaks.toml with the secrets skip list ([[allowlists]], gitleaks v8.25+)."""
-    paths = [f"(^|/){re.escape(d)}/" for d in _dirs(cfg, VENDOR_DIRS)] + [glob_to_re(g) for g in SECRET_SKIP_GLOBS]
+    globs = SECRET_SKIP_GLOBS + (TEST_GLOBS if cfg["skip_tests"] else [])
+    paths = [f"(^|/){re.escape(d)}/" for d in _dirs(cfg, VENDOR_DIRS)] + [glob_to_re(g) for g in globs]
     body = ('[extend]\nuseDefault = true\n\n[[allowlists]]\ndescription = "cybersec-scan secrets skip list"\npaths = [\n'
             + "".join(f"  '{p}',\n" for p in paths) + "]\n")   # TOML literal strings: no escape rules
     out = ensure_dir(root) / "gitleaks.toml"

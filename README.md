@@ -7,12 +7,12 @@ It combines deterministic scanners with an AI reviewer. It never changes your co
 
 | Area | Check | Tool | Output |
 |---|---|---|---|
-| Dependencies | Known vulnerabilities (CVEs), medium and above | osv-scanner | One finding per advisory group. CVSS severity, fixed versions, `prod`/`dev` scope (npm, Poetry, uv), CISA KEV flag, EPSS score |
+| Dependencies | Known vulnerabilities (CVEs), medium and above | osv-scanner | One finding per package version: worst advisory first, one upgrade target that fixes all (same release line), CVSS severity, `prod`/`dev` scope (npm, Poetry, uv), CISA KEV flag, EPSS score |
 | Secrets, current files | Keys, tokens and passwords, including in docs and markdown | gitleaks | Rule, file, line. Secret values are never stored |
-| Secrets, git history | Keys committed and later removed | gitleaks (history) | Marked "rotate": history still holds the value |
+| Secrets, git history | Keys committed and later removed | gitleaks (history) | Marked "rotate": history still holds the value. Not repeated when the key is still in current files. Files over `secret_max_mb` (default 1) are skipped |
 | Code rules | Taint flows from request data to SQL, shell and fetch; SQL and shell built from strings; path traversal; SSRF; weak hashes; unsafe deserialization; TLS checks off; raw HTML; Supabase service key in client code; CORS `*` | semgrep (17 rules in `rules/semgrep.yml`) | Rule, file, line, OWASP 2025 mapping |
 | Supabase config | Edge functions with `verify_jwt = false` | built-in | Function name and line |
-| GitHub Actions | Template injection, excessive permissions, unpinned actions and more | zizmor | Audit, file, line |
+| GitHub Actions | Template injection, excessive permissions, unpinned actions and more | zizmor | One finding per audit and file, with every line |
 | Containers and IaC | Dockerfile, Terraform, Kubernetes, Helm misconfiguration | trivy config | Check ID, file, lines |
 | Database (Postgres or Supabase migrations) | RLS off (R1), open `true` policies (R2), unguarded SECURITY DEFINER functions (R5), sign-in-only policies (R6), `user_metadata` in policies (R7), no fixed `search_path` (R8), views without `security_invoker` (R9) | SQL replay | Final state of every table, view and function |
 | Database, live (opt-in) | Same rules on the real catalog (L1-L4); anon key can read rows of a tenant table (L5) | live mode, read-only | Replaces replay results it disproves |
@@ -60,7 +60,7 @@ Results land in the project under `.cybersec/`:
 | `.cybersec/report.html` | Current report. Open it in a browser. Works offline |
 | `.cybersec/reports/<date>-tools/` | Tool run, with `findings.json` and `sql_tables.json` (table inventory) |
 | `.cybersec/last_findings.json` | All current findings with their ids, scope and verdicts |
-| `.cybersec/config.toml` | Settings: `skip_tests`, `osv_enrich`, `timeout_<tool>`, `[sql] public_default_grants`, `[live]` |
+| `.cybersec/config.toml` | Settings: `skip_tests`, `osv_enrich`, `secret_max_mb`, `timeout_<tool>`, `[sql] public_default_grants`, `[live]` |
 | `.cybersec/verdicts.json` | Your verdicts. Written only by you |
 
 Commands (`CS = python3 ~/.claude/skills/cybersec-scan/scripts/cyber_state.py`):
@@ -120,7 +120,7 @@ System Settings > Privacy and Security > Full Disk Access > add `/bin/bash`.
 
 | Gate | Meaning |
 |---|---|
-| `unit_tests`, `regressions` | All 22 unit tests and 21 regression tests (20 v2 defects plus agent-output checks) pass |
+| `unit_tests`, `regressions` | All unit and regression tests pass (20 v2 defects plus agent-output checks) |
 | `recall_all_planted` | Every planted bug in a seeded project is found |
 | `no_false_alarm_safe_code` | Safe code and test files are not reported |
 | `no_r2_on_service_role` | Policies limited to the server role are not flagged |

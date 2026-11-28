@@ -18,6 +18,7 @@
   prereqs                              tool paths
 """
 import argparse
+import concurrent.futures
 import datetime
 import hashlib
 import json
@@ -401,9 +402,13 @@ def scan_tools(root, history=True, fail_on="none", force_live=False):
             "config": lambda: tools.config_findings(root, cfg),
             "zizmor": lambda: tools.zizmor_findings(root, cfg),
             "trivy": lambda: tools.trivy_findings(root, cfg)}
-    for name, job in jobs.items():
-        ran[name], f = job()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(jobs)) as pool:   # scanners are separate processes
+        futures = {name: pool.submit(job) for name, job in jobs.items()}
+    for name, fut in futures.items():
+        ran[name], f = fut.result()
         cands += f
+    current = {(c.get("rule"), c["file"]) for c in cands if c["source"] == "gitleaks"}
+    cands = [c for c in cands if not (c["source"] == "gitleaks-history" and (c.get("rule"), c["file"]) in current)]
     ran["sql"], sql_f, sql_meta, sql_rows = sql_scan(root, cfg)
     cands += sql_f
     assign_ids(root, cands)

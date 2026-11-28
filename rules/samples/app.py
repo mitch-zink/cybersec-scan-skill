@@ -6,7 +6,7 @@ def a(cur, q, base, name, url):
     subprocess.run(["ls", q])  # ok
     subprocess.run(q, shell=True)  # expect: os-command-py
     open(os.path.join(base, name), "r")  # expect: path-join-open-py
-    requests.get(url)  # expect: ssrf-request-py
+    requests.get(url)  # ok (a function argument, not request data)
     requests.get("https://api.example.com/v1")  # ok
     hashlib.md5(q.encode())  # expect: weak-hash-py
     hashlib.sha256(q.encode())  # ok
