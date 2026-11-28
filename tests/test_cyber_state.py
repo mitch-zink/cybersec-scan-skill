@@ -226,11 +226,11 @@ class VerdictBatchTests(Fixture):
         self.assertLessEqual(b["files"], 2)
         self.assertEqual(b["batch"], 1)
         run_cli("batch-done", self.repo)
-        rc, out = run_cli("batch-next", self.repo, "--size", "100")
+        rc, out = run_cli("batch-next", self.repo, "--size", "100", "--all")
         b2 = json.loads(out)
         self.assertEqual(b2["batch"], 2)
         rc, out = run_cli("batch-done", self.repo)
-        self.assertTrue(json.loads(out)["complete"])                    # every file read
+        self.assertTrue(json.loads(out)["complete"])                    # every in-scope file read
 
     def test_bad_verdict_value_rejected(self):
         self.assertEqual(run_cli("verdict", self.repo, "F-x", "maybe")[0], 2)
