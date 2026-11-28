@@ -109,7 +109,14 @@ rules:
     severity: WARNING
     message: Raw HTML inserted into the page. Check the input is escaped or trusted.
     metadata: {cwe: CWE-79, owasp: A05, fix: "Render text as children. Sanitize HTML with a vetted library if HTML is needed."}
-    pattern: "<$E dangerouslySetInnerHTML={{__html: $X}} />"
+    patterns:
+      - pattern: "<$E dangerouslySetInnerHTML={{__html: $X}} />"
+      - pattern-not-inside: |
+          $X = DOMPurify.sanitize(...);
+          ...
+      - pattern-not-inside: |
+          const $X = DOMPurify.sanitize(...);
+          ...
   - id: taint-sql-py
     mode: taint
     languages: [python]
@@ -153,11 +160,13 @@ rules:
     message: Request data reaches a SQL string. Use bound parameters.
     metadata: {cwe: CWE-89, owasp: A05, fix: "Pass request values as bound parameters."}
     pattern-sources:
-      - pattern-either:
-          - pattern: $REQ.body
-          - pattern: $REQ.query
-          - pattern: $REQ.params
-          - pattern: await $REQ.json()
+      - patterns:
+          - pattern-either:
+              - pattern: $REQ.body
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+              - pattern: await $REQ.json()
+          - metavariable-regex: {metavariable: $REQ, regex: '^(req|request)$'}
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -172,13 +181,16 @@ rules:
     message: Request data sets the URL of an outbound request. Check the host allowlist.
     metadata: {cwe: CWE-918, owasp: A01, fix: "Allow only known hosts. Block private address ranges."}
     pattern-sources:
-      - pattern-either:
-          - pattern: $REQ.body
-          - pattern: $REQ.query
-          - pattern: await $REQ.json()
+      - patterns:
+          - pattern-either:
+              - pattern: $REQ.body
+              - pattern: $REQ.query
+              - pattern: await $REQ.json()
+          - metavariable-regex: {metavariable: $REQ, regex: '^(req|request)$'}
     pattern-sinks:
       - patterns:
           - pattern: fetch($U, ...)
+          - metavariable-regex: {metavariable: $U, regex: '^(?![`"'']https?://)(?!`\$\{[^}]+\}/).*'}
           - focus-metavariable: $U
   - id: supabase-service-key-client
     languages: [javascript, typescript]

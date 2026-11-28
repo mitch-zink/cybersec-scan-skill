@@ -54,3 +54,12 @@ Repo-specific finding details are not recorded here. This repo is public.
 | AI review | 19 of 19 | 19 (1 duplicate root cause) | Code read for each: rate-limit bypass, repeatable retention discount, open redirect, IMAP SSRF, paywall only in the client, and more |
 | Secrets, before | 23 current | 0 | Shell variables (`$SK`), header names (`Idempotency-Key`), Tailwind tokens, public client keys |
 | Secrets, after the noise filter | 20 high | 19 | 43 matches dropped as not secrets (placeholder, identifier, non-secret name). Supabase anon JWTs, Firebase keys and Stripe test keys kept at low with a note. History matches are judged on the line from their commit |
+
+## Dogfood round 4: semgrep precision (job-bot clone)
+
+| Cause of false positives | Fix | Result |
+|---|---|---|
+| Taint source `await $REQ.json()` matched fetch responses | Source object must be `req` or `request` | |
+| `fetch` with a fixed host (`https://...`, `${BASE}/...`) flagged as SSRF | Sink only when the URL start is not fixed | |
+| `dangerouslySetInnerHTML` on `DOMPurify.sanitize` output | Skip sanitized values | |
+| | | semgrep findings 13 to 3; all 3 are true pattern hits |
