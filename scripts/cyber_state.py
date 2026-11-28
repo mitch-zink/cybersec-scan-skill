@@ -60,6 +60,8 @@ def read_json(path, default):
 
 def write_json(path, data):
     path = pathlib.Path(path)
+    if ".cybersec" in path.parts:
+        config.ensure_dir(pathlib.Path(*path.parts[:path.parts.index(".cybersec")]))
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(data, indent=2))
@@ -383,7 +385,7 @@ def status_note(name, st, cfg):
 def scan_tools(root, history=True, fail_on="none", force_live=False):
     """Run every scanner, the SQL replay and live checks. Tool results replace earlier results of tools that ran."""
     root = str(pathlib.Path(root).resolve())
-    cfg = config.load(root)
+    cfg = config.load(root, write=True)
     if force_live:
         cfg["live"]["enabled"] = True
     prev = read_json(p(root, "findings"), [])

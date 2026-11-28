@@ -48,13 +48,23 @@ def secret_skipped(rel, cfg):
     return vendor_skipped(rel, cfg) or ("skip-name" if _name_match(rel, SECRET_SKIP_GLOBS) else None)
 
 
-def load(root):
-    """Read .cybersec/config.toml. Write defaults if missing. Nested tables merge over defaults."""
+def ensure_dir(root):
+    """Create .cybersec/ with a .gitignore of '*', so scan output never shows up in git status."""
+    d = pathlib.Path(root, ".cybersec")
+    d.mkdir(parents=True, exist_ok=True)
+    gi = d / ".gitignore"
+    if not gi.exists():
+        gi.write_text("*\n")
+    return d
+
+
+def load(root, write=False):
+    """Read .cybersec/config.toml (defaults when missing). write=True creates the file. Nested tables merge over defaults."""
     path = pathlib.Path(root, ".cybersec", "config.toml")
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
+    if write and not path.exists():
+        ensure_dir(root)
         path.write_text("# cybersec-scan config\nskip_tests = true\n")
-    user = tomllib.loads(path.read_text())
+    user = tomllib.loads(path.read_text()) if path.exists() else {}
     return {k: ({**v, **user.get(k, {})} if isinstance(v, dict) else user.get(k, v)) for k, v in DEFAULT.items()} \
         | {k: v for k, v in user.items() if k not in DEFAULT}
 
@@ -70,7 +80,6 @@ def gitleaks_config(root, cfg):
     paths = [f"(^|/){re.escape(d)}/" for d in _dirs(cfg, VENDOR_DIRS)] + [glob_to_re(g) for g in SECRET_SKIP_GLOBS]
     body = ('[extend]\nuseDefault = true\n\n[[allowlists]]\ndescription = "cybersec-scan secrets skip list"\npaths = [\n'
             + "".join(f"  '{p}',\n" for p in paths) + "]\n")   # TOML literal strings: no escape rules
-    out = pathlib.Path(root, ".cybersec", "gitleaks.toml")
-    out.parent.mkdir(parents=True, exist_ok=True)
+    out = ensure_dir(root) / "gitleaks.toml"
     out.write_text(body)
     return str(out)

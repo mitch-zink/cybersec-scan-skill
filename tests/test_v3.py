@@ -248,6 +248,16 @@ class OsvTests(unittest.TestCase):
         self.assertEqual(enrich.LAST_NOTE, "")
 
 
+class SideEffectTests(Fixture):
+    def test_read_commands_write_nothing_and_output_is_ignored(self):
+        import subprocess
+        cs.discover(self.repo)
+        self.assertFalse(pathlib.Path(self.repo, ".cybersec").exists())
+        run_cli("tools", self.repo, "--no-history")
+        st = subprocess.run(["git", "status", "--porcelain"], cwd=self.repo, capture_output=True, text=True).stdout
+        self.assertEqual(st, "")
+
+
 class BatchTests(Fixture):
     def add(self, rel, text):
         p = pathlib.Path(self.repo, rel)
