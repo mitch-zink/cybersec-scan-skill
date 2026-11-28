@@ -9,7 +9,7 @@ disallowed-tools: Agent
 # cybersec-scan
 
 One agent does the whole job. Do not start sub-agents.
-Helper: `python3 ${CLAUDE_SKILL_DIR}/scripts/cyber_state.py`.
+Helper: `python3 ${CLAUDE_SKILL_DIR}/scripts/cyber_state.py`. Scanner module: `${CLAUDE_SKILL_DIR}/scripts/tools.py`.
 Scope is the current working directory. Confirm it with `pwd` before you start. Write only under `.cybersec/` there.
 Use the Write tool for every file. Shell use is limited to `git` and `python3`.
 
@@ -18,6 +18,14 @@ Use the Write tool for every file. Shell use is limited to `git` and `python3`.
 - FULL refuses a scope over 150 files (exit 5). Stop. Tell the user to run from a smaller folder.
 - A FULL scan must read every file the helper lists. A partial read is never saved (exit 4). Stop and report the gap.
 - INCR with no prior state becomes FULL. The same limits apply.
+
+## Tools (dependency CVEs and secrets)
+
+Run these in every scan. They cover the whole repo, so the 150-file limit does not apply.
+
+1. `python3 ... prereqs`. If `missing` is not empty, tell the user: `brew install osv-scanner gitleaks`. Continue. State the gap in Coverage.
+2. `python3 ... tools .`. It runs osv-scanner (CVEs, medium and above) and gitleaks (secrets in git history). It writes `report.html`.
+3. Put the tool results in the report. Never store or print a secret value.
 
 ## Mode routing
 
