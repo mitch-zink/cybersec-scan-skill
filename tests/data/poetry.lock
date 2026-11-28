@@ -1,0 +1,22 @@
+[[package]]
+name = "requests"
+version = "2.19.0"
+description = ""
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = []
+
+[[package]]
+name = "pyyaml"
+version = "5.3"
+description = ""
+optional = false
+python-versions = "*"
+groups = ["dev"]
+files = []
+
+[metadata]
+lock-version = "2.1"
+python-versions = "^3.8"
+content-hash = "x"
