@@ -30,11 +30,9 @@ Use the Write tool for every file. Shell use is limited to `git` and `python3`.
 ## FULL
 
 1. `python3 ... discover .` Use `files` as the read list. If `over_cap` is true, stop (see Limits).
-2. Read each file in list order. For each file, check only these classes:
-   CWE-89 SQL injection; CWE-78 command injection; CWE-79 XSS; CWE-22 path traversal;
-   CWE-918 SSRF; CWE-798 hardcoded secret; CWE-502 unsafe deserialization;
-   CWE-862 missing access check; CWE-327 weak crypto; CWE-200 secret or data in logs.
-3. Write each candidate as one object: `{"class","file","lines","evidence","severity","fix_hint"}`.
+2. Read each file in list order. Check every class in `${CLAUDE_SKILL_DIR}/docs/checklist.md` (OWASP 2025 A01 to A10, plus secrets).
+   Apply its "Do not report" rules and confidence labels. Do not run the scanned code.
+3. Write each candidate as one object: `{"class","owasp","file","lines","evidence","severity","confidence","fix_hint"}`.
    Evidence is an exact copy of text in the cited lines, at most 200 characters, no ellipsis. The helper uses it to decide fixed versus open.
 4. Self-check: re-read the cited lines. Drop a candidate if its quote is not there or the class does not fit. Count drops.
 5. Write candidates to `.cybersec/candidates.json` (Write tool). Run `python3 ... merge . .cybersec/candidates.json`.
