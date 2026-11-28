@@ -4,7 +4,7 @@
 |---|---|---|
 | Unit | `python3 tests/test_cyber_state.py` | 22 passed |
 | Regressions (20 v2 defects) | `python3 tests/test_regressions.py` | 20 passed (all 20 failed on v2) |
-| v3 steps | `python3 tests/test_v3.py` | 37 passed |
+| v3 steps | `python3 tests/test_v3.py` | 33 passed |
 | Bench gates | `python3 scripts/bench.py` | 9 of 9 true |
 | AI bench | `python3 scripts/bench.py --ai` | recall 10 of 10, 0 false alarms in 6 safe twins |
 
