@@ -1,44 +1,36 @@
-# Test results (2026-11-27)
+# Test results, v3 (2026-11-28)
 
-Unit tests: `python3 tests/test_cyber_state.py -v` → 15 passed.
-
-## Acceptance criteria
-
-| ID | Check | Result |
+| Suite | Command | Result |
 |---|---|---|
-| AC1 | Full scan lists every top-level entry | PASS (discover: 200 top-level entries, scanned or skipped with reason) |
-| AC2 | Incremental read set = edited file + direct dependents | PASS (edit to a module read that module and its 4 importers; nothing else) |
-| AC3 | Seeded SQL injection found, full and incremental | PASS on fixture (full: found; incremental: found after edit) |
-| AC4 | Parameterized query not reported | PASS on fixture (not reported) |
-| AC5 | Zero-change incremental reads nothing, saves nothing | PASS (clone: "no changes", 16 s wall time, no state write) |
-| AC6 | Daily job writes a dated report | PASS (run-daily.sh on a clone: OK log line, incremental state saved). Launchd load confirmed; the 06:00 trigger itself is not yet observed |
-| AC7 | No sub-agent calls | PASS (`disallowed-tools: Agent`; no Agent call seen in transcripts) |
-| AC8 | Repo has LICENSE, README, SKILL.md, no secrets | PASS (grep for key patterns: none) |
-| AC9 | Patch for seeded SQL bug passes `git apply --check` and fixes it | PASS (check OK; injection returns 0 rows after apply, normal query 1 row) |
-| AC10 | Daily job writes no patches and changes no repo files | PASS (run-daily uses incremental only; no patch files; target git status unchanged) |
+| Unit | `python3 tests/test_cyber_state.py` | 22 passed |
+| Regressions (20 v2 defects) | `python3 tests/test_regressions.py` | 20 passed (all 20 failed on v2) |
+| v3 steps | `python3 tests/test_v3.py` | 33 passed |
+| Bench gates | `python3 scripts/bench.py` | 9 of 9 true |
+| AI bench | `python3 scripts/bench.py --ai` | recall 10 of 10, 0 false alarms in 6 safe twins |
 
-## Real runs (owner repos, read-only except `.cybersec/`, removed afterward)
+## Real runs (clones in a scratch folder; owner repos not written)
 
-| Repo | Mode | Result |
+| Run | Before (v2) | After (v3) |
 |---|---|---|
-| job-bot (root, 3986 files) | FULL | REFUSED: over 150-file cap. Nothing written. |
-| ai-brain (root, 8339 files) | FULL | REFUSED: over cap. |
-| ai-brain/scripts (5 files) | FULL | 5 of 5 read. 1 low finding. 3 candidates dropped on re-review. |
-| streaming-ingest-poc (27 files, owner's repo) | FULL | 27 of 27 read. 2 low findings (CWE-89 table names from settings). |
-| streaming-ingest-poc clone | INCR after edit | 5 files read (edited module + 4 importers). Matches expected set. |
-| streaming-ingest-poc clone | INCR, no change | 0 files read. No save. |
+| job-bot `tools` | 506 findings, 97 s; SQL 370 (R3 100, R5 264, R1 5, R4 1) | 389 findings, 117 s; SQL 39 (R5 28, R9 9, R2 2; R1/R3/R4 0); zizmor 149; secrets in current files 7 to 25 (docs and plans now scanned) |
+| job-bot SQL replay vs live | 14 tables "RLS off"; 5,504 statements not parsed | 0 tables RLS off (live: 0); 20 of 6,313 relevant statements not parsed (0.32%); public policies 349 (live 323) |
+| job-bot live anon probe | n/a | 205 tables, 131 readable, 0 tenant tables returned rows |
+| job-bot live catalog SQL (read-only) | n/a | L1 0, L2 3 (anon INSERT `true` on three tables with `user_id`), L3 0, L4 0; R5 28 to 8 functions an API role can call |
+| poetry.lock with requests 2.19.0 | 0 findings | 7 (one per advisory group), CVSS severity, fixed versions, prod/dev, EPSS |
+| streaming-ingest-poc full AI scan | n/a | 13 of 13 files, state saved, 0 rejected candidates, 0 permission denials, $0.48 |
+| Daily job, repo with no state | could start a full AI scan | NEEDS_FULL, no full scan, one alert, repo files unchanged |
+| Slack alert (local webhook) | none | one post on the first run, none on the second |
+| Unattended `claude -p` cost, tools mode | $1.03 (all user MCP servers loaded) | $0.056 with `--strict-mcp-config` |
+
+## Defects found during the build
+
+| ID | Defect | Fix |
+|---|---|---|
+| X11 | `gitleaks dir` returns absolute paths; ids held the temp path | Paths made repo-relative |
+| - | Supabase default privileges (tables and functions) and `ALTER DEFAULT PRIVILEGES` not modeled | Modeled; trigger functions skipped |
+| - | Short table names in function bodies resolved to the wrong schema | Schema-qualified resolution |
+| - | Semgrep `/src/` include anchored at the git root | Unanchored `src/` |
+| - | SKILL.md `CS` shorthand led to compound commands that permission rules deny | Plain helper calls |
+| - | Read-only commands wrote `.cybersec/config.toml` | Only `tools` writes; `.cybersec/` ignores itself |
 
 Repo-specific finding details are not recorded here. This repo is public.
-
-## Failed or partial checks
-
-| Check | Result | Cause | Planned fix |
-|---|---|---|---|
-| S5: same ids across two runs on same code | FAIL on streaming-ingest-poc clone (run 1: 2 findings; run 2: 6 findings with different ids) | Finding id hashes the agent's evidence quote. The agent words the quote differently per run. | v1.1: hash class + file + enclosing function name. Until then, ids can change between runs. |
-| Incremental marked a dropped finding "fixed" | FOUND and FIXED in this build | Merge treated any missing finding in a read file as fixed. | Fixed status now requires the exact evidence text to be gone from the file. Two unit tests added. |
-| Partial FULL state saved | FOUND and FIXED in this build (job-bot, ai-brain runs) | Agent read a fraction of files and saved state. | Helper refuses FULL over 150 files and refuses any save where read count differs from file count. |
-| Read count is self-reported | KNOWN LIMIT | The helper cannot see which files the agent opened. | v1.1: log file reads. Coverage lists each file read. |
-| launchd run | PASS outside ~/Documents (kickstart: START, OK, exit 0) | macOS blocks launchd from reading ~/Documents (exit 126, "Operation not permitted"). | Runner now lives in ~/.local/share/cybersec-scan. Owner must grant Full Disk Access to /bin/bash for ~/Documents repos. |
-| 06:00 trigger itself | NOT YET OBSERVED | First scheduled fire is 2026-11-28 06:00. | Check the log that morning. |
-| Full scan of job-bot | NOT RUN | 3986 files exceed the 150-file cap. | Decision needed: raise the cap, or add batched FULL runs. |
-| PR CI on push | PARTIAL | The pull_request run did not start for pushes to the feature branch. The unit job passed on the same commit via workflow_dispatch. | Investigate workflow trigger; manual dispatch used. |

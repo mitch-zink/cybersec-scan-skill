@@ -34,8 +34,11 @@ class Fixture(unittest.TestCase):
                               capture_output=True, text=True).stdout.strip()
 
     def save_base(self):
-        n = len(cs.discover(self.repo)["files"])
-        return run_cli("save", self.repo, "FULL", str(n))[0]
+        for _ in range(10):
+            run_cli("batch-next", self.repo)
+            if json.loads(run_cli("batch-done", self.repo)[1])["complete"]:
+                break
+        return run_cli("save", self.repo, "FULL")[0]
 
     def commit_edit(self, rel, text):
         pathlib.Path(self.repo, rel).write_text(text)
@@ -61,7 +64,7 @@ class DiscoverTests(Fixture):
 
 class CapTests(Fixture):
     def test_partial_read_is_never_saved(self):
-        rc, out = run_cli("save", self.repo, "FULL", "1")
+        rc, out = run_cli("save", self.repo, "FULL")
         self.assertEqual(rc, 4)
         self.assertFalse(pathlib.Path(self.repo, ".cybersec", "state.json").exists())
 
@@ -125,8 +128,8 @@ class MergeTests(Fixture):
         return f
 
     def test_incremental_keeps_unread_findings_open(self):
-        a = {"class": "CWE-89", "file": "app/search.py", "lines": "4-4", "evidence": "execute(...)"}
-        b = {"class": "CWE-798", "file": "app/secrets.py", "lines": "2-2", "evidence": "API_KEY"}
+        a = {"class": "CWE-89", "file": "app/search.py", "lines": "4-4", "evidence": "db.execute(", "control_checked": "Looked for a guard or bound parameter; none found."}
+        b = {"class": "CWE-798", "file": "app/secrets.py", "lines": "2-2", "evidence": "API_KEY", "control_checked": "Looked for a guard or bound parameter; none found."}
         run_cli("merge", self.repo, self.cands(a, b))
         scope = os.path.join(self.tmp, "incr.json")
         pathlib.Path(scope).write_text(json.dumps({"read_set": ["app/search.py"]}))
@@ -137,7 +140,7 @@ class MergeTests(Fixture):
         self.assertEqual(kept, {"app/search.py": "open", "app/secrets.py": "open"})
 
     def test_dropped_but_still_present_stays_open(self):
-        b = {"class": "CWE-798", "file": "app/secrets.py", "lines": "2-2", "evidence": "API_KEY"}
+        b = {"class": "CWE-798", "file": "app/secrets.py", "lines": "2-2", "evidence": "API_KEY", "control_checked": "Looked for a guard or bound parameter; none found."}
         run_cli("merge", self.repo, self.cands(b))
         scope = os.path.join(self.tmp, "incr.json")
         pathlib.Path(scope).write_text(json.dumps({"read_set": ["app/secrets.py"]}))
@@ -146,8 +149,8 @@ class MergeTests(Fixture):
         self.assertEqual(res["findings"][0]["status"], "open")
 
     def test_incremental_fixes_only_inside_read_set(self):
-        a = {"class": "CWE-89", "file": "app/search.py", "lines": "4-4", "evidence": "execute(...)"}
-        b = {"class": "CWE-798", "file": "app/secrets.py", "lines": "2-2", "evidence": "API_KEY"}
+        a = {"class": "CWE-89", "file": "app/search.py", "lines": "4-4", "evidence": "db.execute(", "control_checked": "Looked for a guard or bound parameter; none found."}
+        b = {"class": "CWE-798", "file": "app/secrets.py", "lines": "2-2", "evidence": "API_KEY", "control_checked": "Looked for a guard or bound parameter; none found."}
         run_cli("merge", self.repo, self.cands(a, b))
         pathlib.Path(self.repo, "app/secrets.py").write_text("# key removed\n")
         scope = os.path.join(self.tmp, "incr.json")
@@ -157,9 +160,9 @@ class MergeTests(Fixture):
 
     def test_ids_stable_and_status_transitions(self):
         a = {"class": "CWE-89", "file": "app/search.py", "lines": "4-4",
-             "evidence": "execute(...)", "severity": "high"}
+             "evidence": "db.execute(", "control_checked": "Looked for a guard or bound parameter; none found.", "severity": "high"}
         b = {"class": "CWE-798", "file": "app/secrets.py", "lines": "2-2",
-             "evidence": "API_KEY", "severity": "high"}
+             "evidence": "API_KEY", "control_checked": "Looked for a guard or bound parameter; none found.", "severity": "high"}
         rc, out1 = run_cli("merge", self.repo, self.cands(a, b))
         first = json.loads(out1)["findings"]
         self.assertTrue(all(f["status"] == "new" for f in first))
@@ -172,7 +175,7 @@ class MergeTests(Fixture):
         self.assertEqual(second["fixed"][0]["status"], "fixed")
 
     def test_duplicate_candidates_get_distinct_ids(self):
-        a = {"class": "CWE-22", "file": "app/files.py", "lines": "6-6", "evidence": "open("}
+        a = {"class": "CWE-22", "file": "app/files.py", "lines": "6-6", "evidence": "open(", "control_checked": "Looked for a guard or bound parameter; none found."}
         _, out = run_cli("merge", self.repo, self.cands(a, a))
         ids = [f["id"] for f in json.loads(out)["findings"]]
         self.assertEqual(len(set(ids)), 2)
@@ -204,21 +207,21 @@ class ToolTests(Fixture):
 
 
 class VerdictBatchTests(Fixture):
-    def cands(self, evidence):
+    def cands(self, evidence, cls="CWE-89"):
         p = os.path.join(self.tmp, "v.json")
-        pathlib.Path(p).write_text(json.dumps([{"class": "CWE-89", "file": "app/search.py",
-                                                  "lines": "4-4", "evidence": evidence}]))
+        pathlib.Path(p).write_text(json.dumps([{"class": cls, "file": "app/search.py", "lines": "4-4",
+                                                  "evidence": evidence, "control_checked": "Looked for a guard or bound parameter; none found."}]))
         return p
 
     def test_verdict_kept_on_rescan_and_cleared_on_change(self):
-        first = json.loads(run_cli("merge", self.repo, self.cands("execute(...)"))[1])["findings"][0]
+        first = json.loads(run_cli("merge", self.repo, self.cands("db.execute("))[1])["findings"][0]
         run_cli("verdict", self.repo, first["id"], "false_positive", "reviewed")
-        again = json.loads(run_cli("merge", self.repo, self.cands("execute(...)"))[1])["findings"][0]
-        self.assertEqual(again["id"], first["id"])
-        self.assertEqual(again["verdict"], "false_positive")          # AC4: kept
-        moved = json.loads(run_cli("merge", self.repo, self.cands("execute(x)"))[1])["findings"][0]
+        again = json.loads(run_cli("merge", self.repo, self.cands("return db.execute("))[1])["findings"][0]
+        self.assertEqual(again["id"], first["id"])                     # same class, file, function
+        self.assertEqual(again["verdict"], "false_positive")
+        moved = json.loads(run_cli("merge", self.repo, self.cands("db.execute(", "CWE-78"))[1])["findings"][0]
         self.assertNotEqual(moved["id"], first["id"])
-        self.assertEqual(moved["verdict"], "new")                      # AC5: cleared
+        self.assertEqual(moved["verdict"], "new")                      # class change clears it
 
     def test_batches_pick_auth_code_first_and_complete(self):
         rc, out = run_cli("batch-next", self.repo, "--size", "2")
@@ -241,11 +244,11 @@ class RuleTests(unittest.TestCase):
     def test_semgrep_rules_match_expectations(self):
         import re, glob, tools
         samples = str(HERE.parent / "rules" / "samples")
-        ok, found = tools.semgrep_findings(samples, {"skip_tests": False})
-        self.assertTrue(ok)
+        status, found = tools.semgrep_findings(samples, {"skip_tests": False})
+        self.assertEqual(status, "ran")
         hits = {(os.path.basename(f["file"]), int(f["lines"].split("-")[0]), f["evidence"].split(" ")[0]) for f in found}
         expected = set()
-        for path in glob.glob(os.path.join(samples, "*.*")):
+        for path in glob.glob(os.path.join(samples, "**", "*.*"), recursive=True):
             for i, line in enumerate(open(path), 1):
                 m = re.search(r"expect: (\S+)", line)
                 if m:
@@ -276,11 +279,12 @@ class SqlReplayTests(unittest.TestCase):
         import sql_state
         f, meta = sql_state.findings(str(HERE.parent / "rules" / "samples" / "migrations"))
         rules = sorted(x["evidence"].split(" ")[0] for x in f)
-        self.assertIn("R1", rules)      # invoices: RLS off
+        self.assertIn("R1", rules)      # invoices: RLS off, anon reaches it by default grants
         self.assertIn("R2", rules)      # notes: USING (true)
-        self.assertIn("R4", rules)      # notes: grant to anon
-        self.assertIn("R5", rules)      # SECURITY DEFINER export_all
-        self.assertEqual(meta["unparsed_statements"], 1)   # the DO block, counted not guessed
+        self.assertIn("R5", rules)      # SECURITY DEFINER export_all, callable by public
+        self.assertIn("R8", rules)      # export_all has no search_path
+        self.assertEqual(meta["unparsed"], 0)
+        self.assertEqual(meta["do_unexpanded"], 1)   # the DO block, counted not guessed
 
 
 if __name__ == "__main__":
