@@ -1,9 +1,12 @@
-"""External scanners: osv-scanner (dependency CVEs), gitleaks (secrets), semgrep (code rules).
-Stdlib only. Secret values are never stored: gitleaks runs with --redact and only rule, file, line are kept."""
+"""External scanners and the HTML report. Stdlib only.
+Each *_findings returns (status, findings); status is ran | missing | timeout | error.
+Secret values are never stored: gitleaks runs with --redact and only rule, file, line are kept."""
 import hashlib
+import html as H
 import json
 import os
 import pathlib
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -12,9 +15,11 @@ import config
 
 HERE = pathlib.Path(__file__).resolve().parent
 RULES = HERE.parent / "rules" / "semgrep.yml"
-PREREQ_HINT = "brew install osv-scanner gitleaks semgrep"
+SKILL_CLI = pathlib.Path("~/.claude/skills/cybersec-scan/scripts/cyber_state.py")
+TOOLS = ("osv-scanner", "gitleaks", "semgrep", "zizmor", "trivy")
+PREREQ_HINT = "brew install " + " ".join(TOOLS)
 SEV_MAP = {"CRITICAL": "critical", "HIGH": "high", "MODERATE": "medium", "MEDIUM": "medium", "LOW": "low"}
-TOOLS = ("osv-scanner", "gitleaks", "semgrep")
+SEV_ORDER = ["critical", "high", "medium", "low"]
 
 
 def prereqs():
@@ -22,22 +27,42 @@ def prereqs():
     return {"tools": found, "missing": [t for t, p in found.items() if not p], "install": PREREQ_HINT}
 
 
-def _run(cmd, out_flag, timeout=1800):
-    """Run cmd, writing JSON to a temp file. Returns (returncode, parsed JSON or None)."""
+def _run(cmd, out_flag, timeout):
+    """Run cmd. JSON goes to a temp file (out_flag + path) or stdout (out_flag None).
+    Returns (status, returncode, parsed JSON or None); status is ok | timeout | error."""
     fd, path = tempfile.mkstemp(suffix=".json")
     os.close(fd)
-    argv = cmd + ([out_flag] if out_flag else []) + [path]
-    r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
-    data = None
+    argv = cmd + ([out_flag, path] if out_flag else [])
     try:
-        data = json.loads(pathlib.Path(path).read_text()) if os.path.getsize(path) else None
-    except (OSError, json.JSONDecodeError):
-        data = None
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        pathlib.Path(path).unlink(missing_ok=True)
+        return "timeout", None, None
+    except OSError:
+        pathlib.Path(path).unlink(missing_ok=True)
+        return "error", None, None
+    raw = r.stdout if out_flag is None else pathlib.Path(path).read_text()
     pathlib.Path(path).unlink(missing_ok=True)
-    return r.returncode, data
+    try:
+        return "ok", r.returncode, json.loads(raw) if raw.strip() else None
+    except json.JSONDecodeError:
+        return "ok", r.returncode, None
 
 
-def _rel(root, p):
+def _call(tool, cmd, out_flag, cfg, key, ok_rcs):
+    """Shared wrapper: (status, data). status ran | missing | timeout | error."""
+    if not shutil.which(tool):
+        return "missing", None
+    st, rc, data = _run(cmd, out_flag, cfg.get(f"timeout_{key}", 600))
+    if st != "ok":
+        return st, None
+    return ("ran" if rc in ok_rcs else "error"), data
+
+
+def rel(root, p):
+    """Repo-relative posix path. Relative input is already repo-relative."""
+    if not os.path.isabs(str(p)):
+        return str(p)
     try:
         return str(pathlib.Path(p).resolve().relative_to(pathlib.Path(root).resolve()))
     except ValueError:
@@ -57,142 +82,171 @@ def _npm_scope(lockfile, name):
 
 
 def osv_findings(root, cfg):
-    """Dependency CVEs, medium and above. Returns (ran, findings)."""
-    if not shutil.which("osv-scanner"):
-        return False, []
-    rc, data = _run(["osv-scanner", "scan", "source", "-r", "--format", "json", str(root)], "--output-file")
-    if data is None:
-        return rc in (0, 1, 128), []     # 1 = found, 128 = no lockfiles
+    """Dependency CVEs, medium and above."""
+    st, data = _call("osv-scanner", ["osv-scanner", "scan", "source", "-r", "--format", "json", str(root)],
+                     "--output-file", cfg, "osv", (0, 1, 128))   # 1 = found, 128 = no lockfiles
+    if st != "ran":
+        return st, []
     out = []
-    for res in data.get("results", []):
+    for res in (data or {}).get("results", []):
         src = res.get("source", {}).get("path", "?")
-        rel = _rel(root, src)
-        if config.path_skipped(rel, cfg):
+        rp = rel(root, src)
+        if config.vendor_skipped(rp, cfg):
             continue
         for pkg in res.get("packages", []):
             name, ver = pkg["package"]["name"], pkg["package"]["version"]
-            scope = _npm_scope(src, name) if src.endswith("package-lock.json") else "unknown"
+            scope = _npm_scope(pathlib.Path(root, rp), name) if rp.endswith("package-lock.json") else "unknown"
             for v in pkg.get("vulnerabilities", []):
                 sev = SEV_MAP.get(str(v.get("database_specific", {}).get("severity", "")).upper(), "medium")
                 if sev == "low":
                     continue
                 cve = next((a for a in v.get("aliases", []) if a.startswith("CVE-")), v["id"])
                 out.append({"source": "osv", "owasp": "A03", "class": cve, "severity": sev,
-                            "confidence": "confirmed", "scope": scope, "file": rel, "lines": "-",
+                            "confidence": "confirmed", "scope": scope, "file": rp, "lines": "-",
                             "evidence": f"{name}@{ver} {cve}", "fp": f"{name}@{ver}",
                             "fix_hint": f"Upgrade {name} past {ver}. {v.get('summary', '')}".strip()})
-    return True, out
+    return "ran", out
 
 
 def gitleaks_findings(root, cfg, history):
-    """Secrets. history=False: current files (current line numbers). history=True: git history."""
-    if not shutil.which("gitleaks"):
-        return False, []
+    """Secrets. history=False: current files. history=True: git history (source gitleaks-history)."""
     conf = config.gitleaks_config(root, cfg)
-    mode = ["git"] if history else ["dir"]
-    rc, data = _run(["gitleaks", *mode, str(root), "-c", conf, "--redact", "--no-banner", "-f", "json", "-r"], "", timeout=1800)
-    if rc not in (0, 1) or (rc == 1 and data is None):   # 1 = leaks found; 1 with no output = config error
-        return False, []
+    st, data = _call("gitleaks", ["gitleaks", "git" if history else "dir", str(root), "-c", conf, "--redact",
+                                  "--no-banner", "-f", "json"], "-r", cfg,
+                     "gitleaks_history" if history else "gitleaks", (0, 1))
+    if st != "ran":
+        return st, []
+    src, scope = ("gitleaks-history", "history") if history else ("gitleaks", "current")
+    hint = "Remove the secret and rotate it." + (" The value is in git history: rotate it even after removal." if history else "")
     out = []
     for f in data or []:
-        rel = f.get("File", "?")
-        if config.path_skipped(rel, cfg):
+        rp = rel(root, f.get("File", "?"))
+        if config.secret_skipped(rp, cfg):
             continue
-        scope = "history" if history else "current"
-        hint = "Remove the secret and rotate it." + (" The value is in git history: rotate it even after removal." if history else "")
-        out.append({"source": "gitleaks", "owasp": "A02", "class": "CWE-798", "severity": "high",
-                    "confidence": "confirmed", "scope": scope, "file": rel,
+        out.append({"source": src, "owasp": "A02", "class": "CWE-798", "severity": "high",
+                    "confidence": "confirmed", "scope": scope, "file": rp,
                     "lines": f"{f.get('StartLine', '?')}-{f.get('EndLine', '?')}",
-                    "evidence": f"{f.get('RuleID', 'secret')} {rel}:{f.get('StartLine', '?')}",
-                    "fp": f"{f.get('RuleID', '')}:{f.get('Fingerprint', '')}",
+                    "evidence": f"{f.get('RuleID', 'secret')} {rp}:{f.get('StartLine', '?')}",
+                    "fp": f.get("Fingerprint", "") if history else f"{f.get('RuleID', '')}:{rp}:{f.get('StartLine', '')}",
                     "fix_hint": hint})
-    return True, out
+    return "ran", out
 
 
 def semgrep_findings(root, cfg):
-    """Code rules from rules/semgrep.yml. Returns (ran, findings)."""
-    if not shutil.which("semgrep"):
-        return False, []
-    skip = [a for a in ("--exclude=" + d for d in config.ALWAYS_DIRS)]
-    rc, data = _run(["semgrep", "--config", str(RULES), "--json", "--metrics=off", "--quiet", *skip, str(root)], "--output")
-    if data is None:
-        return False, []
+    """Code rules from rules/semgrep.yml."""
+    skip = ["--exclude=" + d for d in config.ALWAYS_DIRS]
+    st, data = _call("semgrep", ["semgrep", "--config", str(RULES), "--json", "--metrics=off", "--quiet", *skip, str(root)],
+                     "--output", cfg, "semgrep", (0, 1))
+    if st != "ran" or data is None:
+        return ("error" if st == "ran" else st), []
     out = []
     for r in data.get("results", []):
-        rel = _rel(root, r.get("path", "?"))
-        if config.path_skipped(rel, cfg):
+        rp = rel(root, r.get("path", "?"))
+        if config.path_skipped(rp, cfg):
             continue
         meta = r.get("extra", {}).get("metadata", {})
         line = r.get("start", {}).get("line", "?")
         cid = r.get("check_id", "rule").split(".")[-1]
+        sev = {"ERROR": "high", "WARNING": "medium"}.get(r.get("extra", {}).get("severity", ""), "low")
         out.append({"source": "semgrep", "owasp": meta.get("owasp", ""), "class": meta.get("cwe", cid),
-                    "severity": r.get("extra", {}).get("severity", "WARNING").lower().replace("warning", "medium").replace("error", "high"),
-                    "confidence": "confirmed", "scope": "current", "file": rel,
-                    "lines": f"{line}-{r.get('end', {}).get('line', line)}",
-                    "evidence": f"{cid} {rel}:{line}",
-                    "fp": f"{cid}|{rel}|{hashlib.sha1(r.get('extra', {}).get('lines', '').encode()).hexdigest()}",
+                    "severity": sev, "confidence": "confirmed", "scope": "current", "file": rp,
+                    "lines": f"{line}-{r.get('end', {}).get('line', line)}", "evidence": f"{cid} {rp}:{line}",
+                    "fp": f"{cid}|{rp}|{hashlib.sha1(r.get('extra', {}).get('lines', '').encode()).hexdigest()}",
                     "fix_hint": meta.get("fix", r.get("extra", {}).get("message", ""))})
-    return True, out
+    return "ran", out
 
 
-SEV_ORDER = ["critical", "high", "medium", "low"]
-VERDICTS = ["new", "real", "accepted_risk", "false_positive"]
-
+# ---------------------------------------------------------------- report
 
 def utc_now():
     import datetime
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def html_report(findings, meta, notes, max_rows=500):
-    """One static page. Verdict changes are made with the CLI command shown on each row."""
-    import html as H
-    visible = [f for f in findings if f.get("verdict") != "false_positive"]
-    hidden = len(findings) - len(visible)
-    visible.sort(key=lambda f: (SEV_ORDER.index(f["severity"]) if f["severity"] in SEV_ORDER else 9, f.get("id", "")))
+def verdict_cli():
+    p = SKILL_CLI.expanduser()
+    return str(SKILL_CLI) if p.exists() else str(HERE / "cyber_state.py")
+
+
+def _sev_key(f):
+    return (SEV_ORDER.index(f["severity"]) if f["severity"] in SEV_ORDER else 9, not f.get("kev"),
+            -float(f.get("epss") or 0), f.get("id", ""))
+
+
+def html_report(findings, meta, notes, root=".", max_rows=500, warnings=()):
+    """One static page: open findings, a fixed section, tool warnings and coverage notes."""
+    e = lambda s: H.escape(str(s))  # noqa: E731
+    fixed = [f for f in findings if f.get("status") == "fixed"]
+    live = [f for f in findings if f.get("status") != "fixed"]
+    visible = sorted((f for f in live if f.get("verdict") != "false_positive"), key=_sev_key)
+    hidden = len(live) - len(visible)
+    cli = verdict_cli()
     rows = []
     for f in visible[:max_rows]:
-        cmd = f"python3 scripts/cyber_state.py verdict . {f.get('id', '?')} real"
+        cmd = f'python3 {cli} verdict {shlex.quote(str(root))} {f.get("id", "?")} real "reason"'
+        tag = ' <span class="kev">KEV</span>' if f.get("kev") else ""
         rows.append(
-            f'<tr data-sev="{H.escape(f["severity"])}" data-src="{H.escape(f.get("source", "agent"))}">'
-            f'<td><span class="sev {H.escape(f["severity"])}">{H.escape(f["severity"])}</span></td>'
-            f'<td>{H.escape(f["class"])}</td><td>{H.escape(f.get("owasp", ""))}</td>'
-            f'<td>{H.escape(f.get("source", "agent"))}</td><td>{H.escape(f.get("scope", ""))}</td>'
-            f'<td><code>{H.escape(f["file"])}</code> {H.escape(str(f["lines"]))}</td>'
-            f'<td><code>{H.escape(f["evidence"])}</code></td>'
-            f'<td>{H.escape(f.get("fix_hint", ""))}</td>'
-            f'<td>{H.escape(f.get("verdict", "new"))} <button data-cmd="{H.escape(cmd)}" onclick="cp(this)">copy verdict cmd</button></td></tr>')
+            f'<tr data-sev="{e(f["severity"])}"><td><span class="sev {e(f["severity"])}">{e(f["severity"])}</span></td>'
+            f'<td>{e(f.get("status", "new"))}</td><td>{e(f.get("confidence", ""))}</td>'
+            f'<td>{e(f["class"])}{tag}</td><td>{e(f.get("owasp", ""))}</td><td>{e(f.get("source", "agent"))}</td>'
+            f'<td>{e(f.get("scope", ""))}</td><td><code>{e(f["file"])}</code> {e(f["lines"])}</td>'
+            f'<td><code>{e(f["evidence"])}</code></td><td>{e(f.get("fix_hint", ""))}</td>'
+            f'<td>{e(f.get("verdict", "new"))} <button type="button" data-cmd="{e(cmd)}" onclick="cp(this)">copy verdict cmd</button></td></tr>')
+    fixed_rows = "".join(
+        f'<tr><td><span class="sev {e(f["severity"])}">{e(f["severity"])}</span></td><td>{e(f["class"])}</td>'
+        f'<td>{e(f.get("source", "agent"))}</td><td><code>{e(f["file"])}</code></td>'
+        f'<td>{e(f.get("fixed_reason", "tool ran, finding gone"))}</td></tr>' for f in fixed)
     counts = {s: sum(1 for f in visible if f["severity"] == s) for s in SEV_ORDER}
     cards = "".join(f'<div class="card"><b>{counts[s]}</b><span class="sev {s}">{s}</span></div>' for s in SEV_ORDER)
-    note_items = "".join(f"<li>{H.escape(n)}</li>" for n in notes)
-    more = f"<p>{len(visible) - max_rows} more rows not shown. Use the CLI report.</p>" if len(visible) > max_rows else ""
+    banners = "".join(f'<div class="banner warn">{e(w)}</div>' for w in warnings)
+    if not visible:
+        banners += f'<div class="banner ok"><b>No open findings.</b> Hidden as false positive: {hidden}.</div>'
+    table = "" if not visible else (
+        '<div class="wrap"><table><thead><tr><th>Severity</th><th>Status</th><th>Confidence</th><th>Class</th>'
+        '<th>OWASP 2025</th><th>Source</th><th>Scope</th><th>File</th><th>Evidence</th><th>Fix</th><th>Verdict</th>'
+        f'</tr></thead><tbody id="rows">{"".join(rows)}</tbody></table></div>')
+    more = f"<p>{len(visible) - max_rows} more rows not shown. Use last_findings.json.</p>" if len(visible) > max_rows else ""
+    fixed_html = "" if not fixed else (
+        f'<details><summary><b>Fixed since last run ({len(fixed)})</b></summary><div class="wrap"><table><thead><tr>'
+        '<th>Severity</th><th>Class</th><th>Source</th><th>File</th><th>Why fixed</th></tr></thead>'
+        f'<tbody>{fixed_rows}</tbody></table></div></details>')
+    note_items = "".join(f"<li>{e(n)}</li>" for n in notes)
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Security scan: {H.escape(meta['repo'])}</title>
+<title>Security scan: {e(meta['repo'])}</title>
 <style>
-body{{font:14px -apple-system,system-ui,sans-serif;margin:24px;color:#1d2330;background:#f7f8fb}}
-h1{{font-size:20px;margin:0 0 4px}} .sub{{color:#5b6577;margin-bottom:16px}}
-.cards{{display:flex;gap:12px;margin:12px 0}} .card{{background:#fff;border:1px solid #d9dee8;border-radius:8px;padding:10px 14px;min-width:90px}}
-.card b{{display:block;font-size:22px}} .sev{{padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;color:#fff}}
-.critical{{background:#7a1020}} .high{{background:#c2410c}} .medium{{background:#b45309}} .low{{background:#4b5563}}
-table{{border-collapse:collapse;width:100%;background:#fff;font-size:13px}} th,td{{border:1px solid #d9dee8;padding:6px 8px;text-align:left;vertical-align:top}}
-th{{background:#eef1f7}} code{{font-size:12px}} button{{font-size:11px}} .notes{{color:#5b6577;font-size:12px}} .wrap{{overflow-x:auto;max-width:100%}}
-@media (prefers-color-scheme: dark){{body{{color:#e6e9f0;background:#14171f}} .card,table{{background:#1d2330}} th{{background:#252c3b}} th,td,.card{{border-color:#2e3646}}}}
+:root{{--bg:#f6f7f9;--fg:#15212b;--muted:#566573;--card:#fff;--line:#d5dde3;--head:#eef2f4;
+--crit:#9b1c31;--high:#b8430f;--med:#93600a;--low:#4b5563;--ok:#167a3e;--info:#2f5f9e;color-scheme:light}}
+@media (prefers-color-scheme: dark){{:root{{--bg:#0e1418;--fg:#e2e8ec;--muted:#97a6b2;--card:#151d23;--line:#2a3741;
+--head:#1b252c;--crit:#c43a52;--high:#c25a1f;--med:#a87a14;--low:#5f6b78;--ok:#2f9a5b;--info:#4d84cf;color-scheme:dark}}}}
+body{{font:14px/1.5 -apple-system,system-ui,sans-serif;margin:0;padding:24px max(16px,env(safe-area-inset-right)) 32px max(16px,env(safe-area-inset-left));color:var(--fg);background:var(--bg)}}
+h1{{font-size:20px;margin:0 0 4px}} .sub{{color:var(--muted);margin-bottom:12px;font-size:13px}}
+.cards{{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}} .card{{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;min-width:80px}}
+.card b{{display:block;font-size:22px;font-variant-numeric:tabular-nums}}
+.sev,.kev{{padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;color:#fff;white-space:nowrap}}
+.critical,.kev{{background:var(--crit)}} .high{{background:var(--high)}} .medium{{background:var(--med)}} .low{{background:var(--low)}}
+.banner{{border:1px solid;border-radius:6px;padding:8px 10px;margin:8px 0;background:var(--card)}}
+.banner.warn{{border-color:var(--high)}} .banner.ok{{border-color:var(--ok)}} .banner.info{{border-color:var(--info)}}
+.wrap{{overflow-x:auto;max-width:100%;border:1px solid var(--line);border-radius:6px;margin:8px 0}}
+table{{border-collapse:collapse;width:100%;background:var(--card);font-size:13px}}
+th,td{{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}} th{{background:var(--head);white-space:nowrap}}
+code{{font-size:12px;word-break:break-word}} button{{font-size:11px}} .notes{{color:var(--muted);font-size:12px}}
+summary{{cursor:pointer;margin:12px 0 4px}} select{{font:inherit}}
 </style></head><body>
-<h1>Security scan: {H.escape(meta['repo'])}</h1>
-<div class="sub">Mode: {H.escape(meta['mode'])} · Date: {H.escape(meta['date'])} · Scanners: {H.escape(meta['scanners'])} · Hidden as false positive: {hidden}</div>
+<h1>Security scan: {e(meta['repo'])}</h1>
+<div class="sub">Mode: {e(meta['mode'])} · Date: {e(meta['date'])} · Scanners: {e(meta['scanners'])} · Hidden as false positive: {hidden}</div>
+{banners}
 <div class="cards">{cards}</div>
 <label>Severity <select id="f"><option value="">all</option>{''.join(f'<option>{s}</option>' for s in SEV_ORDER)}</select></label>
-<div class="wrap"><table><thead><tr><th>Severity</th><th>Class</th><th>OWASP 2025</th><th>Source</th><th>Scope</th><th>File</th><th>Evidence</th><th>Fix</th><th>Verdict</th></tr></thead>
-<tbody id="rows">{''.join(rows)}</tbody></table></div>{more}
+{table}{more}{fixed_html}
 <h3>Coverage and tools</h3><ul class="notes">{note_items}</ul>
 <script>
 document.getElementById('f').addEventListener('change',e=>{{const v=e.target.value;
-document.querySelectorAll('#rows tr').forEach(r=>r.style.display=(!v||r.dataset.sev===v)?'':'none');}});
-function cp(b){{navigator.clipboard&&navigator.clipboard.writeText(b.dataset.cmd).catch(()=>{{}});}}
+document.querySelectorAll('#rows tr').forEach(r=>r.hidden=!!v&&r.dataset.sev!==v);}});
+function cp(b){{navigator.clipboard&&navigator.clipboard.writeText(b.dataset.cmd).then(()=>{{b.textContent='copied'}},()=>{{}});}}
 </script></body></html>"""
 
 
-def build_html(findings, meta, notes, path):
-    pathlib.Path(path).write_text(html_report(findings, meta, notes))
+def build_html(findings, meta, notes, path, root=".", warnings=()):
+    pathlib.Path(path).write_text(html_report(findings, meta, notes, root, warnings=warnings))
     return str(path)
