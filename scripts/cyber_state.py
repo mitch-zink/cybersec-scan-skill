@@ -231,7 +231,8 @@ def merge(root, candidates_file, scope_file=None):
     taken, out = set(), []
     for c in cands:
         fid = finding_id(c["class"], c["file"], c["evidence"], taken)
-        out.append({"id": fid, "class": c["class"], "severity": c.get("severity", "medium"),
+        out.append({"id": fid, "class": c["class"], "owasp": c.get("owasp", ""),
+                    "severity": c.get("severity", "medium"), "confidence": c.get("confidence", "likely"),
                     "file": c["file"], "lines": c["lines"], "evidence": c["evidence"],
                     "fix_hint": c.get("fix_hint", ""),
                     "status": "open" if fid in prev else "new"})
