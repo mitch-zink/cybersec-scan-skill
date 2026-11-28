@@ -60,19 +60,6 @@ class DiscoverTests(Fixture):
 
 
 class CapTests(Fixture):
-    def test_full_refused_over_cap_and_no_state_saved(self):
-        orig = cs.FULL_CAP
-        cs.FULL_CAP = 2
-        try:
-            rc, out = run_cli("incr", self.repo)
-            self.assertEqual(rc, 3)                      # no state yet
-            n = len(cs.discover(self.repo)["files"])
-            rc, out = run_cli("save", self.repo, "FULL", str(n))
-            self.assertEqual(rc, 5)
-            self.assertFalse(pathlib.Path(self.repo, ".cybersec", "state.json").exists())
-        finally:
-            cs.FULL_CAP = orig
-
     def test_partial_read_is_never_saved(self):
         rc, out = run_cli("save", self.repo, "FULL", "1")
         self.assertEqual(rc, 4)
@@ -214,6 +201,69 @@ class ToolTests(Fixture):
         res = json.loads(run_cli("merge", self.repo, empty)[1])
         self.assertEqual(res["fixed"], [])
         self.assertIn("F-tool", [f["id"] for f in res["findings"]])
+
+
+class VerdictBatchTests(Fixture):
+    def cands(self, evidence):
+        p = os.path.join(self.tmp, "v.json")
+        pathlib.Path(p).write_text(json.dumps([{"class": "CWE-89", "file": "app/search.py",
+                                                  "lines": "4-4", "evidence": evidence}]))
+        return p
+
+    def test_verdict_kept_on_rescan_and_cleared_on_change(self):
+        first = json.loads(run_cli("merge", self.repo, self.cands("execute(...)"))[1])["findings"][0]
+        run_cli("verdict", self.repo, first["id"], "false_positive", "reviewed")
+        again = json.loads(run_cli("merge", self.repo, self.cands("execute(...)"))[1])["findings"][0]
+        self.assertEqual(again["id"], first["id"])
+        self.assertEqual(again["verdict"], "false_positive")          # AC4: kept
+        moved = json.loads(run_cli("merge", self.repo, self.cands("execute(x)"))[1])["findings"][0]
+        self.assertNotEqual(moved["id"], first["id"])
+        self.assertEqual(moved["verdict"], "new")                      # AC5: cleared
+
+    def test_batches_pick_auth_code_first_and_complete(self):
+        rc, out = run_cli("batch-next", self.repo, "--size", "2")
+        b = json.loads(out)
+        self.assertLessEqual(b["files"], 2)
+        self.assertEqual(b["batch"], 1)
+        run_cli("batch-done", self.repo)
+        rc, out = run_cli("batch-next", self.repo, "--size", "100")
+        b2 = json.loads(out)
+        self.assertEqual(b2["batch"], 2)
+        rc, out = run_cli("batch-done", self.repo)
+        self.assertTrue(json.loads(out)["complete"])                    # every file read
+
+    def test_bad_verdict_value_rejected(self):
+        self.assertEqual(run_cli("verdict", self.repo, "F-x", "maybe")[0], 2)
+
+
+class RuleTests(unittest.TestCase):
+    """Each Semgrep rule must fire on its '# expect:' lines and nowhere else."""
+    def test_semgrep_rules_match_expectations(self):
+        import re, glob, tools
+        samples = str(HERE.parent / "rules" / "samples")
+        ok, found = tools.semgrep_findings(samples, {"skip_tests": False})
+        self.assertTrue(ok)
+        hits = {(os.path.basename(f["file"]), int(f["lines"].split("-")[0]), f["evidence"].split(" ")[0]) for f in found}
+        expected = set()
+        for path in glob.glob(os.path.join(samples, "*.*")):
+            for i, line in enumerate(open(path), 1):
+                m = re.search(r"expect: (\S+)", line)
+                if m:
+                    expected.add((os.path.basename(path), i, m.group(1)))
+        self.assertEqual(expected - hits, set(), "rules that did not fire")
+        self.assertEqual(hits - expected, set(), "rules that fired unexpectedly")
+
+
+class SqlReplayTests(unittest.TestCase):
+    def test_replay_flags_open_policy_leak_and_grant(self):
+        import sql_state
+        f, meta = sql_state.findings(str(HERE.parent / "rules" / "samples" / "migrations"))
+        rules = sorted(x["evidence"].split(" ")[0] for x in f)
+        self.assertIn("R1", rules)      # invoices: RLS off
+        self.assertIn("R2", rules)      # notes: USING (true)
+        self.assertIn("R4", rules)      # notes: grant to anon
+        self.assertIn("R5", rules)      # SECURITY DEFINER export_all
+        self.assertEqual(meta["unparsed_statements"], 1)   # the DO block, counted not guessed
 
 
 if __name__ == "__main__":

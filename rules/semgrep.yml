@@ -1,0 +1,101 @@
+rules:
+  - id: sql-concat-js
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: SQL built by string concatenation. Use bound parameters.
+    metadata: {cwe: CWE-89, owasp: A05, fix: "Pass values as bound parameters, not concatenated text."}
+    patterns:
+      - pattern-either:
+          - pattern: $DB.query($SQL, ...)
+          - pattern: $DB.execute($SQL, ...)
+          - pattern: $DB.raw($SQL, ...)
+      - metavariable-pattern:
+          metavariable: $SQL
+          pattern-either:
+            - pattern: '"..." + ...'
+            - pattern: '... + "..."'
+  - id: sql-format-py
+    languages: [python]
+    severity: ERROR
+    message: SQL built with formatting. Use bound parameters.
+    metadata: {cwe: CWE-89, owasp: A05, fix: "Use the driver's parameter placeholders."}
+    pattern-either:
+      - pattern: $C.execute(f"...", ...)
+      - pattern: $C.execute("..." % $X, ...)
+      - pattern: $C.execute("...".format(...), ...)
+      - pattern: $C.execute("..." + ..., ...)
+      - pattern: $C.execute(... + "...", ...)
+  - id: os-command-js
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Shell command built from a string. Use execFile with an argument list.
+    metadata: {cwe: CWE-78, owasp: A05, fix: "Use child_process.execFile with a fixed command and an argument array."}
+    patterns:
+      - pattern-either:
+          - pattern: $CP.exec($CMD, ...)
+          - pattern: $CP.execSync($CMD, ...)
+      - metavariable-pattern:
+          metavariable: $CMD
+          pattern-either:
+            - pattern: '"..." + ...'
+            - pattern: '... + "..."'
+  - id: os-command-py
+    languages: [python]
+    severity: ERROR
+    message: Shell command built from a string or run with shell=True.
+    metadata: {cwe: CWE-78, owasp: A05, fix: "Pass an argument list and do not use shell=True."}
+    pattern-either:
+      - pattern: os.system(f"...")
+      - pattern: os.system("..." + $X)
+      - pattern: subprocess.$F(..., shell=True, ...)
+  - id: path-join-open-py
+    languages: [python]
+    severity: WARNING
+    message: File path built from input. Check it stays inside the base folder.
+    metadata: {cwe: CWE-22, owasp: A01, fix: "Resolve the path and check it starts with the base folder."}
+    pattern: open(os.path.join($B, $X), ...)
+  - id: ssrf-request-py
+    languages: [python]
+    severity: WARNING
+    message: Outbound request to a URL that is not a literal. Check the host allowlist.
+    metadata: {cwe: CWE-918, owasp: A01, fix: "Allow only known hosts. Block private address ranges."}
+    patterns:
+      - pattern-either:
+          - pattern: requests.$M($URL, ...)
+          - pattern: urllib.request.urlopen($URL, ...)
+      - pattern-not: requests.$M("...", ...)
+      - pattern-not: urllib.request.urlopen("...", ...)
+  - id: weak-hash-py
+    languages: [python]
+    severity: WARNING
+    message: MD5 or SHA-1 is weak for passwords and signatures.
+    metadata: {cwe: CWE-327, owasp: A04, fix: "Use bcrypt, scrypt, or argon2 for passwords. Use SHA-256 or stronger for integrity."}
+    pattern-either:
+      - pattern: hashlib.md5(...)
+      - pattern: hashlib.sha1(...)
+  - id: unsafe-deserialize-py
+    languages: [python]
+    severity: ERROR
+    message: Unsafe deserialization of input.
+    metadata: {cwe: CWE-502, owasp: A08, fix: "Use yaml.safe_load. Do not unpickle untrusted data."}
+    pattern-either:
+      - pattern: pickle.loads(...)
+      - pattern: yaml.load($X)
+  - id: tls-verify-off-py
+    languages: [python]
+    severity: ERROR
+    message: TLS certificate check turned off.
+    metadata: {cwe: CWE-295, owasp: A04, fix: "Remove verify=False. Set a CA bundle if needed."}
+    pattern: requests.$M(..., verify=False, ...)
+  - id: tls-reject-off-js
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: TLS certificate check turned off.
+    metadata: {cwe: CWE-295, owasp: A04, fix: "Remove rejectUnauthorized: false."}
+    pattern: "{..., rejectUnauthorized: false, ...}"
+  - id: react-raw-html
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: Raw HTML inserted into the page. Check the input is escaped or trusted.
+    metadata: {cwe: CWE-79, owasp: A05, fix: "Render text as children. Sanitize HTML with a vetted library if HTML is needed."}
+    pattern: "<$E dangerouslySetInnerHTML={{__html: $X}} />"
