@@ -4,7 +4,7 @@
 |---|---|---|
 | Unit | `python3 tests/test_cyber_state.py` | 22 passed |
 | Regressions (20 v2 defects) | `python3 tests/test_regressions.py` | 21 passed (20 v2 defects, all failed on v2, plus agent-output checks) |
-| v3 steps | `python3 tests/test_v3.py` | 35 passed |
+| v3 steps | `python3 tests/test_v3.py` | 36 passed |
 | Bench gates | `python3 scripts/bench.py` | 9 of 9 true |
 | AI bench | `python3 scripts/bench.py --ai` | recall 10 of 10, 0 false alarms in 6 safe twins |
 
@@ -46,3 +46,11 @@ Repo-specific finding details are not recorded here. This repo is public.
 | Semgrep: `ssrf-request-py` pattern replaced by taint rule `taint-ssrf-py` | 28 | 13 |
 | `tools` wall time: gitleaks reads files up to 1 MB; scanners run in parallel | 279 s | 82 s |
 | Tool findings total | 390 | 215 |
+
+## Dogfood round 3: precision by hand review (job-bot clone)
+
+| Source | Checked | Real | Notes |
+|---|---|---|---|
+| AI review | 19 of 19 | 19 (1 duplicate root cause) | Code read for each: rate-limit bypass, repeatable retention discount, open redirect, IMAP SSRF, paywall only in the client, and more |
+| Secrets, before | 23 current | 0 | Shell variables (`$SK`), header names (`Idempotency-Key`), Tailwind tokens, public client keys |
+| Secrets, after the noise filter | 20 high | 19 | 43 matches dropped as not secrets (placeholder, identifier, non-secret name). Supabase anon JWTs, Firebase keys and Stripe test keys kept at low with a note. History matches are judged on the line from their commit |

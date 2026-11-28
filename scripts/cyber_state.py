@@ -394,6 +394,7 @@ def scan_tools(root, history=True, fail_on="none", force_live=False):
         cfg["live"]["enabled"] = True
     prev = read_json(p(root, "findings"), [])
     ran, cands = {}, []
+    tools.SECRET_NOISE.clear()
     jobs = {"osv": lambda: tools.osv_findings(root, cfg),
             "gitleaks": lambda: tools.gitleaks_findings(root, cfg, history=False),
             "gitleaks-history": (lambda: tools.gitleaks_findings(root, cfg, history=True)) if history and is_git(root)
@@ -439,6 +440,8 @@ def scan_tools(root, history=True, fail_on="none", force_live=False):
               f"{sql_meta.get('unparsed', 0)} relevant statements not parsed"
               + (f" ({100 * sql_meta.get('unparsed', 0) / rel_total:.1f}%)." if rel_total else "."),
               *live_notes, *([tools.enrich.LAST_NOTE] if tools.enrich.LAST_NOTE else []),
+              *([f"Secret matches dropped as not secrets: {sum(tools.SECRET_NOISE.values())} "
+                 f"({', '.join(f'{k} {v}' for k, v in sorted(tools.SECRET_NOISE.items()))})."] if tools.SECRET_NOISE else []),
               "Skipped paths: see .cybersec/config.toml.",
               f"Agent findings carried over: {len(agents)}. Fixed since last tool run: {len(fixed)}."]
     warnings = [n for n in notes if "NOT RUN" in n]
@@ -524,7 +527,7 @@ def batch_done(root):
 def stats(root, md=False):
     """Verdict counts per source; precision = real / (real + false_positive). Fixed findings excluded."""
     rows = {}
-    for f in read_json(p(root, "findings"), []):
+    for f in apply_verdicts(root, read_json(p(root, "findings"), [])):
         r = rows.setdefault(source_of(f), {"findings": 0, "real": 0, "false_positive": 0, "accepted_risk": 0, "unreviewed": 0})
         r["findings"] += 1
         r[f.get("verdict", "new") if f.get("verdict", "new") != "new" else "unreviewed"] += 1

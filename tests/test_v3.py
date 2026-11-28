@@ -260,6 +260,19 @@ class SideEffectTests(Fixture):
         self.assertEqual(st, "")
 
 
+class SecretFilterTests(unittest.TestCase):
+    def test_secret_noise(self):
+        d = pathlib.Path(tempfile.mkdtemp())
+        (d / "a.md").write_text('curl -s -u "$SK:" https://api.example.com\nIdempotency-Key: refund-x-A-12345678\n'
+                                'tokens: `bg-surface-900`\nk = "sk-live-1234567890abcdef1234"\n')
+        f = lambda line, rule="generic-api-key", match="x REDACTED": {"RuleID": rule, "Match": match, "File": "a.md",
+                                                                      "StartLine": line, "StartColumn": 1, "EndColumn": 60}
+        self.assertEqual(tools.secret_noise(d, f(1, "curl-auth-user")), "placeholder")
+        self.assertEqual(tools.secret_noise(d, f(2, match="Idempotency-Key: REDACTED")), "not-a-secret-name")
+        self.assertEqual(tools.secret_noise(d, f(3)), "identifier")
+        self.assertIsNone(tools.secret_noise(d, f(4)))          # a real key shape is kept
+
+
 class SecretNoiseTests(Fixture):
     def test_secret_in_test_file_skipped_and_history_duplicate_dropped(self):
         import config
@@ -382,8 +395,9 @@ class OpsFixtureTests(Fixture):
     def test_stats(self):
         p = pathlib.Path(self.repo, ".cybersec", "last_findings.json")
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps([dict(HIGH, id="a", verdict="real"), dict(HIGH, id="b", verdict="false_positive"),
-                                 dict(HIGH, id="c"), dict(HIGH, id="d", source="agent", verdict="accepted_risk")]))
+        p.write_text(json.dumps([dict(HIGH, id="a"), dict(HIGH, id="b"), dict(HIGH, id="c"), dict(HIGH, id="d", source="agent")]))
+        for fid, v in (("a", "real"), ("b", "false_positive"), ("d", "accepted_risk")):
+            run_cli("verdict", self.repo, fid, v, "test")
         rows = json.loads(run_cli("stats", self.repo)[1])
         self.assertEqual(rows["gitleaks"], {"findings": 3, "real": 1, "false_positive": 1, "accepted_risk": 0,
                                             "unreviewed": 1, "precision": "0.50"})

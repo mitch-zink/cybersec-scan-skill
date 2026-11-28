@@ -1,6 +1,7 @@
 """External scanners and the HTML report. Stdlib only.
 Each *_findings returns (status, findings); status is ran | missing | timeout | error.
 Secret values are never stored: gitleaks runs with --redact and only rule, file, line are kept."""
+import base64
 import hashlib
 import re
 import html as H
@@ -156,6 +157,64 @@ def by_package(advisories):
     return out
 
 
+KEY_PREFIXES = ("sk", "rk", "pk", "whsec", "xox", "ghp", "gho", "ghs", "glpat", "akia", "asia", "shpat", "npm_")
+NOT_SECRET_NAME = re.compile(r"idempotency|version|nonce|request[_-]?id|correlation|trace[_-]?id|site_?key|publishable", re.I)
+PLACEHOLDER = re.compile(r"\$\{?\w|<[^>]{2,}>|\.\.\.|\{\{")
+IDENTIFIER = re.compile(r"[a-z]+(?:[_-][a-z0-9]+){2,}")
+PUBLIC_FILES = ("google-services.json", "GoogleService-Info.plist")
+SECRET_NOISE = {}
+
+
+def _window(root, f):
+    """The matched text, read in memory only (from the commit for history). None when it cannot be read."""
+    try:
+        if f.get("Commit"):
+            r = subprocess.run(["git", "show", f"{f['Commit']}:{f['File']}"], cwd=root, capture_output=True, text=True,
+                               errors="ignore", timeout=30)
+            text = r.stdout if r.returncode == 0 else ""
+        else:
+            text = pathlib.Path(root, f["File"]).read_text(errors="ignore")
+        # 2 extra chars each side: history columns count the diff's leading '+'
+        return text.splitlines()[f["StartLine"] - 1][max(0, f["StartColumn"] - 3):f["EndColumn"] + 2]
+    except (OSError, IndexError, KeyError, TypeError, subprocess.TimeoutExpired):
+        return None
+
+
+def secret_noise(root, f, window=None):
+    """Reason this gitleaks match is not a secret, else None."""
+    rule, match = f.get("RuleID", ""), f.get("Match", "")
+    if NOT_SECRET_NAME.search(match.split("REDACTED")[0]):
+        return "not-a-secret-name"
+    window = _window(root, f) if window is None else window
+    if not window:
+        return None
+    if PLACEHOLDER.search(window):
+        return "placeholder"
+    value = max(re.split(r"[\s=:\"'`,;]+", window), key=len)
+    if IDENTIFIER.fullmatch(value) and not value.lower().startswith(KEY_PREFIXES):
+        return "identifier"
+    if rule == "generic-api-key" and not re.search(r"\d", value):
+        return "identifier"
+    return None
+
+
+def secret_public(rp, f, window):
+    """Note when the secret is public or test-only by design (kept, low severity), else None."""
+    if rp.endswith(PUBLIC_FILES):
+        return "Firebase client keys are public by design. Restrict the key to your app in the Google Cloud console."
+    if window and re.search(r"\b[rs]k_test_", window):
+        return "Stripe test-mode key: no live money. Still move it to an environment variable."
+    m = re.search(r"eyJ[\w-]+\.([\w-]+)\.[\w-]+", window or "")
+    if m:
+        try:
+            role = json.loads(base64.urlsafe_b64decode(m.group(1) + "=" * (-len(m.group(1)) % 4))).get("role")
+        except (ValueError, TypeError):
+            role = None
+        if role == "anon":
+            return "Supabase anon key: public by design. RLS must protect the data."
+    return None
+
+
 def gitleaks_findings(root, cfg, history):
     """Secrets. history=False: current files. history=True: git history (source gitleaks-history)."""
     conf = config.gitleaks_config(root, cfg)
@@ -171,12 +230,19 @@ def gitleaks_findings(root, cfg, history):
         rp = rel(root, f.get("File", "?"))
         if config.secret_skipped(rp, cfg):
             continue
-        out.append({"source": src, "rule": f.get("RuleID", ""), "owasp": "A02", "class": "CWE-798", "severity": "high",
+        window = _window(root, dict(f, File=rp))
+        why = secret_noise(root, dict(f, File=rp), window or "")
+        if why:
+            SECRET_NOISE[why] = SECRET_NOISE.get(why, 0) + 1
+            continue
+        public = secret_public(rp, f, window)
+        out.append({"source": src, "rule": f.get("RuleID", ""), "owasp": "A02", "class": "CWE-798",
+                    "severity": "low" if public else "high",
                     "confidence": "confirmed", "scope": scope, "file": rp,
                     "lines": f"{f.get('StartLine', '?')}-{f.get('EndLine', '?')}",
                     "evidence": f"{f.get('RuleID', 'secret')} {rp}:{f.get('StartLine', '?')}",
                     "fp": f.get("Fingerprint", "") if history else f"{f.get('RuleID', '')}:{rp}:{f.get('StartLine', '')}",
-                    "fix_hint": hint})
+                    "fix_hint": public or hint})
     return "ran", out
 
 
