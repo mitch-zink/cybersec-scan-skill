@@ -154,10 +154,23 @@ def findings(migration_dir):
             if {"anon", "public"} & set(g["roles"]):
                 add("R4", "CWE-732", "A01", "high", name, t, "grant to anon or public",
                     "Revoke the grant. Expose tenant data only through an authenticated policy.", g["where"])
+    guard = re.compile(r"auth\.uid\(\)|auth\.jwt\(\)|current_setting|tenant|org_id|workspace|is_member|has_role", re.I)
     for fname, f in funcs.items():
-        for tname, t in tables.items():
-            if f["definer"] and t["cols"] & TENANT_COLS and re.search(r"\b" + re.escape(tname) + r"\b", f["body"], re.I):
-                add("R5", "CWE-863", "A01", "medium", tname, t, f"SECURITY DEFINER {fname} touches table",
-                    "Check the caller's tenant inside the function, or use SECURITY INVOKER.", f["where"])
+        if not f["definer"] or guard.search(f["body"]):
+            continue
+        hit = next((tn for tn, t in tables.items() if t["cols"] & TENANT_COLS
+                    and re.search(r"\b" + re.escape(tn) + r"\b", f["body"], re.I)), None)
+        if hit:
+            add("R5", "CWE-863", "A01", "medium", hit, tables[hit], f"SECURITY DEFINER {fname} reads or writes {hit} with no tenant check",
+                "Check the caller's tenant inside the function, or use SECURITY INVOKER.", f["where"])
     return out, {"tables": len(tables), "tenant_tables": sum(1 for t in tables.values() if t["cols"] & TENANT_COLS),
                  "functions": len(funcs), "unparsed_statements": unknown}
+
+
+def table_rows(migration_dir):
+    """One row per table: final RLS state, policies, grants, tenant columns (for AC8)."""
+    tables, _, _ = replay(migration_dir)
+    return [{"table": n, "rls": t["rls"], "tenant_cols": sorted(t["cols"] & TENANT_COLS),
+             "policies": [p["name"] + ":" + p["cmd"] for p in t["policies"]],
+             "grants_to": sorted({r for g in t["grants"] for r in g["roles"]}), "created_in": t["created"]["file"]}
+            for n, t in sorted(tables.items())]

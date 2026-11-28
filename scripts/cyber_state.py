@@ -268,14 +268,13 @@ def scan_tools(root, history=True):
     else:
         glh = []
     ran["semgrep"], sg = tools.semgrep_findings(root, cfg)
-    sql, sql_meta = [], {}
+    sql, sql_meta, sql_rows = [], {}, []
     mig = [p for p in pathlib.Path(root).rglob("migrations") if p.is_dir() and any(p.glob("*.sql"))]
-    if mig:
-        sql, sql_meta = [], {}
-        for m in mig:
-            f, meta = sql_state.findings(str(m))
-            sql += f
-            sql_meta = meta
+    for m in mig:
+        f, meta = sql_state.findings(str(m))
+        sql += f
+        sql_meta = meta
+        sql_rows += sql_state.table_rows(str(m))
     ran["sql"] = True
     cands = osv + gl + glh + sg + sql
     taken, now, out = set(), set(), []
@@ -300,6 +299,7 @@ def scan_tools(root, history=True):
     d.mkdir(parents=True, exist_ok=True)
     everything = out + apply_verdicts(root, fixed)
     (d / "findings.json").write_text(json.dumps(everything, indent=2))
+    (d / "sql_tables.json").write_text(json.dumps(sql_rows, indent=2))
     notes = [f"{k}: {'ran' if v else 'NOT RUN (install: ' + tools.PREREQ_HINT + ')'}" for k, v in ran.items()]
     notes += [f"SQL replay: {sql_meta.get('tables', 0)} tables, {sql_meta.get('tenant_tables', 0)} with tenant columns, "
               f"{sql_meta.get('unparsed_statements', 0)} statements not parsed.",
@@ -315,17 +315,23 @@ def scan_tools(root, history=True):
     return 0
 
 
-def batch_next(root, size):
+def batch_next(root, size, everything=False):
+    """Next unread files for the AI reader. SQL is excluded (the SQL replay reads it).
+    Default: priority files only (auth, tenant, API, policy). everything=True: all remaining non-SQL files."""
     root = str(pathlib.Path(root).resolve())
     d = discover(root)
     prog_p = pathlib.Path(root, PROGRESS_REL)
     prog = json.loads(prog_p.read_text()) if prog_p.exists() else {"read": [], "batches": 0}
     done = set(prog["read"])
-    todo = [f for f in d["files"] if f not in done]
-    todo.sort(key=lambda f: (0 if PRIORITY.search(f) else 1, f))
+    pool = [f for f in d["files"] if not f.endswith(".sql")]
+    if not everything:
+        pool = [f for f in pool if PRIORITY.search(f)]
+    todo = sorted((f for f in pool if f not in done), key=lambda f: (0 if PRIORITY.search(f) else 1, f))
     pick = todo[:min(size, FULL_CAP)]
     pathlib.Path(root, BATCH_REL).write_text(json.dumps({"read_set": pick, "batch": prog["batches"] + 1}, indent=2))
-    print(json.dumps({"batch": prog["batches"] + 1, "files": len(pick), "remaining_after": len(todo) - len(pick),
+    not_this_run = sum(1 for f in d["files"] if f not in done and not f.endswith(".sql")) - len(todo) if not everything else 0
+    print(json.dumps({"batch": prog["batches"] + 1, "files": len(pick), "remaining_in_scope": len(todo) - len(pick),
+                      "not_ai_reviewed_this_run": not_this_run, "sql_replay_only": sum(f.endswith(".sql") for f in d["files"]),
                       "total": d["count"], "skipped": len(d["skipped"]), "read_set": pick}))
     return 0
 
@@ -338,8 +344,11 @@ def batch_done(root):
     prog["read"] = sorted(set(prog["read"]) | set(b["read_set"]))
     prog["batches"] = b["batch"]
     prog_p.write_text(json.dumps(prog, indent=2))
-    total = discover(root)["count"]
-    print(json.dumps({"read": len(prog["read"]), "total": total, "complete": len(prog["read"]) >= total}))
+    d = discover(root)
+    done = set(prog["read"])
+    pending = [f for f in d["files"] if f not in done and not f.endswith(".sql")]
+    print(json.dumps({"read": len(prog["read"]), "total": d["count"], "pending_non_sql": len(pending),
+                      "complete": not pending}))
     return 0
 
 
@@ -366,6 +375,7 @@ def main(argv):
     m = sub.add_parser("merge"); m.add_argument("root"); m.add_argument("candidates_file"); m.add_argument("--scope", default=None)
     t = sub.add_parser("tools"); t.add_argument("root"); t.add_argument("--no-history", action="store_true")
     b = sub.add_parser("batch-next"); b.add_argument("root"); b.add_argument("--size", type=int, default=FULL_CAP)
+    b.add_argument("--all", action="store_true", help="include all non-SQL files, not only priority files")
     sub.add_parser("batch-done").add_argument("root")
     v = sub.add_parser("verdict"); v.add_argument("root"); v.add_argument("id"); v.add_argument("value"); v.add_argument("reason", nargs="?", default="")
     sub.add_parser("prereqs")
@@ -383,7 +393,7 @@ def main(argv):
     if a.cmd == "tools":
         return scan_tools(a.root, history=not a.no_history)
     if a.cmd == "batch-next":
-        return batch_next(a.root, a.size)
+        return batch_next(a.root, a.size, a.all)
     if a.cmd == "batch-done":
         return batch_done(a.root)
     if a.cmd == "verdict":
