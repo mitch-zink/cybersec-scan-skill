@@ -257,5 +257,28 @@ class ConfigTests(unittest.TestCase):
                          [("supabase/config.toml", "1", "verify_jwt = false for function open-hook")])
 
 
+class ScannerParseTests(unittest.TestCase):
+    def test_zizmor_parse(self):
+        f = tools.parse_zizmor("/repo", json.loads((DATA / "zizmor.json").read_text()))
+        self.assertEqual([(x["class"], x["severity"], x["file"], x["lines"]) for x in f],
+                         [("template-injection", "high", ".github/workflows/bad.yml", "10")])
+        self.assertIn("github.event.issue.title", f[0]["evidence"])
+
+    def test_trivy_parse(self):
+        f = tools.parse_trivy("/repo", json.loads((DATA / "trivy.json").read_text()))
+        self.assertEqual(sorted((x["class"], x["severity"], x["file"]) for x in f),
+                         [("DS-0002", "high", "Dockerfile"), ("DS-0026", "low", "Dockerfile")])
+
+    def test_missing_tool_status(self):
+        which, tools.shutil.which = tools.shutil.which, (lambda t: None)
+        d = tempfile.mkdtemp()
+        pathlib.Path(d, ".github", "workflows").mkdir(parents=True)
+        try:
+            self.assertEqual(tools.zizmor_findings(d, {})[0], "missing")
+            self.assertEqual(tools.trivy_findings(d, {})[0], "missing")
+        finally:
+            tools.shutil.which = which
+
+
 if __name__ == "__main__":
     unittest.main()

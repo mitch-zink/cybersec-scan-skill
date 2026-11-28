@@ -200,6 +200,58 @@ def config_findings(root, cfg):
     return "ran", out
 
 
+def zizmor_findings(root, cfg):
+    """GitHub Actions: zizmor, offline. Runs only when the repo has workflows or an action.yml."""
+    if not (pathlib.Path(root, ".github", "workflows").is_dir() or any(pathlib.Path(root).glob("action.y*ml"))):
+        return "ran", []
+    st, data = _call("zizmor", ["zizmor", "--format=json-v1", "--offline", "--no-exit-codes", str(root)], None,
+                     cfg, "zizmor", (0, 3, 11, 12, 13, 14))
+    return (st, []) if st != "ran" else ("ran", parse_zizmor(root, data or []))
+
+
+def parse_zizmor(root, items):
+    out = []
+    for x in items:
+        d = x.get("determinations", {})
+        sev = {"High": "high", "Medium": "medium", "Low": "low", "Unknown": "low"}.get(d.get("severity"))
+        if not sev or not x.get("locations"):
+            continue
+        loc = x["locations"][0]
+        rp = rel(root, loc["symbolic"]["key"].get("Local", {}).get("verbatim_path", "?")).removeprefix("./")
+        line = loc["concrete"]["location"]["start_point"]["row"] + 1          # json-v1 rows are 0-based
+        feat = loc["concrete"].get("feature", "").strip()[:200]
+        out.append({"source": "zizmor", "owasp": "A03", "class": x["ident"], "severity": sev,
+                    "confidence": "confirmed" if d.get("confidence") == "High" else "likely", "scope": "current",
+                    "file": rp, "lines": str(line), "evidence": feat or x["ident"],
+                    "fp": f"{x['ident']}|{rp}|{hashlib.sha1(feat.encode()).hexdigest()}",
+                    "fix_hint": f"{x.get('desc', '')}. See {x.get('url', '')}"})
+    return out
+
+
+def trivy_findings(root, cfg):
+    """Dockerfile, Terraform, Kubernetes and Helm misconfigurations: trivy config."""
+    skip = [a for d in config.VENDOR_DIRS for a in ("--skip-dirs", d)]
+    st, data = _call("trivy", ["trivy", "config", "--format", "json", "--quiet", *skip, str(root)], "--output",
+                     cfg, "trivy", (0,))
+    return (st, []) if st != "ran" else ("ran", parse_trivy(root, data or {}))
+
+
+def parse_trivy(root, data):
+    out = []
+    for r in data.get("Results") or []:
+        rp = rel(root, r.get("Target", "?"))
+        for m in r.get("Misconfigurations") or []:
+            if m.get("Status") != "FAIL":
+                continue
+            cm = m.get("CauseMetadata") or {}
+            lines = f"{cm['StartLine']}-{cm.get('EndLine', cm['StartLine'])}" if cm.get("StartLine") else "-"
+            out.append({"source": "trivy", "owasp": "A02", "class": m.get("ID", "trivy"),
+                        "severity": SEV_MAP.get(m.get("Severity", ""), "low"), "confidence": "confirmed",
+                        "scope": "current", "file": rp, "lines": lines, "evidence": m.get("Title", m.get("ID", "")),
+                        "fp": f"{m.get('ID')}|{rp}|{lines}", "fix_hint": m.get("Resolution", "")})
+    return out
+
+
 # ---------------------------------------------------------------- report
 
 def utc_now():
