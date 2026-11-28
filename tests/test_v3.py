@@ -113,5 +113,67 @@ class SqlRuleTests(unittest.TestCase):
         self.assertFalse(sql_rules(d, "R1"))
 
 
+class LiveTests(unittest.TestCase):
+    def test_live_probe(self):
+        import http.server
+        import threading
+        import live
+        seen = []
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append(self.headers.get("apikey"))
+                body = {"/rest/v1/t_open": b'[{"id":1}]', "/rest/v1/t_safe": b"[]"}.get(self.path.split("?")[0])
+                self.send_response(200 if body else 401)
+                self.end_headers()
+                self.wfile.write(body or b'{"code":"42501"}')
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            st, f, stats = live.probe(f"http://127.0.0.1:{srv.server_port}", "anon-key", ["t_open", "t_safe", "t_denied"],
+                                      {"t_open", "t_safe", "t_denied"}, "localhost", rate=100)
+        finally:
+            srv.shutdown()
+        self.assertEqual(st, "ran")
+        self.assertEqual([x["table"] for x in f], ["public.t_open"])
+        self.assertEqual(stats, {"tables": 3, "readable": 2, "rows": 1})
+        self.assertEqual(set(seen), {"anon-key"})
+        self.assertNotIn("anon-key", json.dumps(f))
+
+    def test_live_catalog_parse(self):
+        import live
+        d = tempfile.mkdtemp()
+        log = os.path.join(d, "env.log")
+        fake = pathlib.Path(d, "psql")
+        fake.write_text(f"""#!/usr/bin/env python3
+import os, sys
+open({log!r}, "a").write(os.environ.get("PGOPTIONS", "") + "\\n")
+q = sys.argv[sys.argv.index("-c") + 1]
+if "has_function_privilege" in q:
+    print('[{{"t":"f_callable","anon":true,"authed":true}},{{"t":"f_revoked","anon":false,"authed":false}}]')
+elif "relrowsecurity" in q:
+    print('[{{"t":"leaky","tenant":true}}]')
+elif "pg_policies" in q:
+    print('[{{"t":"doc_gaps","name":"anyone","cmd":"INSERT","roles":"{{anon}}"}}]')
+else:
+    print('[]')
+""")
+        fake.chmod(0o755)
+        old = os.environ["PATH"]
+        os.environ["PATH"] = d + os.pathsep + old
+        try:
+            st, f, callable_ = live.catalog("postgresql://ro@localhost/db", "localhost", {"f_callable", "f_revoked"})
+        finally:
+            os.environ["PATH"] = old
+        self.assertEqual(st, "ran")
+        self.assertEqual(sorted(x["rule"] for x in f), ["L1", "L2"])
+        self.assertEqual(next(x for x in f if x["rule"] == "L1")["severity"], "critical")
+        self.assertEqual(callable_, {"f_callable"})
+        self.assertTrue(all("default_transaction_read_only=on" in ln for ln in open(log).read().splitlines()))
+
+
 if __name__ == "__main__":
     unittest.main()

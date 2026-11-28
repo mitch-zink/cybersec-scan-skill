@@ -26,6 +26,7 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import config  # noqa: E402
+import live  # noqa: E402
 import sql_state  # noqa: E402
 import symbols  # noqa: E402
 import tools  # noqa: E402
@@ -365,15 +366,19 @@ def status_note(name, st, cfg):
     if st == "timeout":
         key = name.replace("-", "_")
         return f"{name}: NOT RUN (timeout after {cfg.get('timeout_' + key, 600)} s)"
+    if st == "missing" and name.startswith("live"):
+        return f"{name}: NOT RUN ({'psql not installed' if name == 'live-catalog' else 'no URL or anon key; see [live] in config.toml'})"
     if st == "missing":
         return f"{name}: NOT RUN (missing; install: {tools.PREREQ_HINT})"
     return f"{name}: NOT RUN (error)"
 
 
-def scan_tools(root, history=True, fail_on="none"):
-    """Run every scanner and the SQL replay. Tool results replace earlier results of tools that ran."""
+def scan_tools(root, history=True, fail_on="none", force_live=False):
+    """Run every scanner, the SQL replay and live checks. Tool results replace earlier results of tools that ran."""
     root = str(pathlib.Path(root).resolve())
     cfg = config.load(root)
+    if force_live:
+        cfg["live"]["enabled"] = True
     prev = read_json(p(root, "findings"), [])
     ran, cands = {}, []
     jobs = {"osv": lambda: tools.osv_findings(root, cfg),
@@ -387,6 +392,10 @@ def scan_tools(root, history=True, fail_on="none"):
     ran["sql"], sql_f, sql_meta, sql_rows = sql_scan(root, cfg)
     cands += sql_f
     assign_ids(root, cands)
+    live_st, live_f, drop, live_notes = live.run(root, cfg, sql_f, sql_rows)
+    ran.update(live_st)
+    ran["live"] = "ran" if "ran" in live_st.values() else "off"
+    cands = [c for c in cands if c["id"] not in drop] + assign_ids(root, live_f)
     prev_ids = {f["id"] for f in prev}
     now = {c["id"] for c in cands}
     fresh = [dict(c, status="open" if c["id"] in prev_ids else "new") for c in cands]
@@ -409,7 +418,7 @@ def scan_tools(root, history=True, fail_on="none"):
               f"{sql_meta.get('tenant_tables', 0)} with tenant columns, {sql_meta.get('do_expanded', 0)} DO loops expanded, "
               f"{sql_meta.get('unparsed', 0)} relevant statements not parsed"
               + (f" ({100 * sql_meta.get('unparsed', 0) / rel_total:.1f}%)." if rel_total else "."),
-              "Skipped paths: see .cybersec/config.toml.",
+              *live_notes, "Skipped paths: see .cybersec/config.toml.",
               f"Agent findings carried over: {len(agents)}. Fixed since last tool run: {len(fixed)}."]
     warnings = [n for n in notes if "NOT RUN" in n]
     if warnings:
@@ -495,6 +504,7 @@ def verdict(root, fid, value, reason=""):
 def main(argv):
     ap = argparse.ArgumentParser(prog="cyber_state")
     sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("live").add_argument("root")
     for name in ("discover", "incr", "state", "batch-reset", "batch-done"):
         sub.add_parser(name).add_argument("root")
     s = sub.add_parser("save"); s.add_argument("root"); s.add_argument("mode"); s.add_argument("read_count", type=int, nargs="?")
@@ -520,6 +530,7 @@ def main(argv):
         "save": lambda: save(a.root, a.mode, a.read_count),
         "merge": lambda: merge(a.root, a.candidates_file, a.scope),
         "tools": lambda: scan_tools(a.root, history=not a.no_history, fail_on=a.fail_on),
+        "live": lambda: scan_tools(a.root, history=False, force_live=True),
         "batch-reset": lambda: batch_reset(a.root),
         "batch-next": lambda: batch_next(a.root, a.max_files, a.priority_only, a.max_bytes),
         "batch-done": lambda: batch_done(a.root),

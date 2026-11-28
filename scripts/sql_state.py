@@ -378,8 +378,8 @@ def findings(migration_dir, cfg=None):
     r = replay(migration_dir, cfg)
     out = []
 
-    def add(rule, cls, sev, q, detail, fix, where):
-        out.append({"source": "sql", "rule": rule, "table": q, "owasp": "A02" if rule == "R8" else "A01",
+    def add(rule, cls, sev, q, detail, fix, where, function=None):
+        out.append({"source": "sql", "rule": rule, "table": q, **({"function": function} if function else {}), "owasp": "A02" if rule == "R8" else "A01",
                     "class": cls, "severity": sev, "confidence": "confirmed", "scope": "current",
                     "file": where["file"], "lines": str(where["line"]), "evidence": f"{rule} {q}: {detail}",
                     "fp": f"{rule}|{q}|{detail}", "fix_hint": fix})
@@ -427,7 +427,7 @@ def findings(migration_dir, cfg=None):
             continue
         if not f["search_path"]:
             add("R8", "CWE-426", "medium", q, f"SECURITY DEFINER {q} has no fixed search_path",
-                f"ALTER FUNCTION {q} SET search_path = '' and qualify object names.", f["where"])
+                f"ALTER FUNCTION {q} SET search_path = '' and qualify object names.", f["where"], q)
         callers = f["exec_roles"] & API_ROLES
         if not callers or GUARD.search(f["body"]) or (calls_guard and calls_guard.search(f["body"])):
             continue
@@ -436,7 +436,7 @@ def findings(migration_dir, cfg=None):
             add("R5", "CWE-863", "high" if callers & {"anon", "public"} else "medium", tq,
                 f"SECURITY DEFINER {q} reads or writes {tq} with no auth check; callable by {', '.join(sorted(callers))}",
                 "Check auth.uid() inside the function, revoke EXECUTE from anon and authenticated, or use SECURITY INVOKER.",
-                f["where"])
+                f["where"], q)
     for q, v in r.views.items():
         open_roles = sorted(v["roles"] & {"anon", "authenticated"})
         if q.startswith("public.") and not v["invoker"] and open_roles:
