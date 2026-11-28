@@ -123,7 +123,7 @@ def run(root, cfg, sql_findings, sql_rows):
     if url and key:
         st["live-probe"], f, s = probe(url, key, tables, tenant, host)
         out += f
-        notes.append(f"Live anon probe: {s['tables']} tables, {s['readable']} readable, {len(f)} tenant tables returned rows.")
+        notes.append(f"Live anon probe: {s['tables']} tables, {s['readable']} readable, tenant tables that returned rows: {len(f)}.")
     else:
         st["live-probe"] = "missing"
     if dsn:

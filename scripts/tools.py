@@ -284,7 +284,7 @@ def html_report(findings, meta, notes, root=".", max_rows=500, warnings=(), info
         rows.append(
             f'<tr data-sev="{e(f["severity"])}"><td><span class="sev {e(f["severity"])}">{e(f["severity"])}</span></td>'
             f'<td>{e(f.get("status", "new"))}</td><td>{e(f.get("confidence", ""))}</td>'
-            f'<td>{e(f["class"])}{tag}</td><td>{e(f.get("owasp", ""))}</td><td>{e(f.get("source", "agent"))}</td>'
+            f'<td class="cls">{e(f["class"])}{tag}</td><td>{e(f.get("owasp", ""))}</td><td>{e(f.get("source", "agent"))}</td>'
             f'<td>{e(f.get("scope", ""))}</td><td><code>{e(f["file"])}</code> {e(f["lines"])}</td>'
             f'<td><code>{e(f["evidence"])}</code></td><td>{e(f.get("fix_hint", ""))}</td>'
             f'<td>{e(f.get("verdict", "new"))} <button type="button" data-cmd="{e(cmd)}" onclick="cp(this)">copy verdict cmd</button></td></tr>')
@@ -327,7 +327,7 @@ h1{{font-size:20px;margin:0 0 4px}} .sub{{color:var(--muted);margin-bottom:12px;
 .wrap{{overflow-x:auto;max-width:100%;border:1px solid var(--line);border-radius:6px;margin:8px 0}}
 table{{border-collapse:collapse;width:100%;background:var(--card);font-size:13px}}
 th,td{{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}} th{{background:var(--head);white-space:nowrap}}
-code{{font-size:12px;word-break:break-word}} button{{font-size:11px}} .notes{{color:var(--muted);font-size:12px}}
+code{{font-size:12px;word-break:break-word}} td.cls{{white-space:nowrap}} button{{font-size:11px}} .notes{{color:var(--muted);font-size:12px}}
 summary{{cursor:pointer;margin:12px 0 4px}} select{{font:inherit}}
 </style></head><body>
 <h1>Security scan: {e(meta['repo'])}</h1>

@@ -58,7 +58,7 @@ Map to A01 unless noted. Check every tenant-scoped resource.
 | T3 | RLS enabled | Table with a tenant column and RLS disabled (see SQL pass) |
 | T4 | RLS policy strength | Policy `USING (true)`, missing policy for INSERT, UPDATE, or DELETE, or policy based on a client value |
 | T5 | Privileged bypass | Service-role or admin key used on a user-facing path; `SECURITY DEFINER` function with no tenant check |
-| T6 | Shared keys | Cache key, rate-limit key, queue payload, storage path, search index, or object key without tenant ID |
+| T6 | Shared keys | Cache key, rate-limit key, queue payload, storage path, search index, or object key without tenant ID. A scoped query that fills the cache does not protect it: once one tenant fills the key, the next tenant gets that value |
 | T7 | Bulk and admin | Export, list, or admin endpoint that takes a tenant parameter without a membership check |
 | T8 | Context leakage | Session setting (for example `SET app.tenant`) not reset; worker or background job without tenant context; singleton holding per-user state |
 | T9 | Membership and invites | Invite accepted for a tenant the user does not belong to; role change that crosses tenants |

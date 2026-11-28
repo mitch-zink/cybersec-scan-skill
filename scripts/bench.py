@@ -19,10 +19,11 @@ import tools  # noqa: E402
 
 PLANTED = {"gitleaks": "app/secrets.py", "semgrep-sql": "app/search.py", "semgrep-path": "app/files.py", "sql-open": "0001.sql"}
 SAFE_MUST_NOT = ["tests/fake_key.py", "app/safe.py", "migrations/0002_srv.sql"]
-AI_PLANTED = {"routes/t1_invoices.ts": {"CWE-639", "CWE-863", "T1"}, "routes/t2_invoice.ts": {"CWE-639", "CWE-862", "T2"},
-              "routes/t5_profile.ts": {"CWE-639", "CWE-269", "T5"}, "lib/t6_cache.ts": {"CWE-639", "T6"},
-              "routes/t7_export.ts": {"CWE-862", "CWE-639", "T7"}, "lib/t8_context.ts": {"CWE-362", "CWE-488", "T8"},
-              "routes/t9_invite.ts": {"CWE-863", "T9"}, "routes/t10_webhook.ts": {"CWE-345", "CWE-306", "T10"},
+ACCESS = {"CWE-284", "CWE-285", "CWE-639", "CWE-862", "CWE-863"}   # one access bug gets any of these classes
+AI_PLANTED = {"routes/t1_invoices.ts": ACCESS | {"CWE-639", "CWE-863", "T1"}, "routes/t2_invoice.ts": ACCESS | {"CWE-639", "CWE-862", "T2"},
+              "routes/t5_profile.ts": ACCESS | {"CWE-639", "CWE-269", "T5"}, "lib/t6_cache.ts": ACCESS | {"CWE-524", "CWE-639", "T6"},
+              "routes/t7_export.ts": ACCESS | {"CWE-862", "CWE-639", "T7"}, "lib/t8_context.ts": {"CWE-362", "CWE-488", "T8"},
+              "routes/t9_invite.ts": ACCESS | {"CWE-863", "T9"}, "routes/t10_webhook.ts": {"CWE-345", "CWE-306", "T10"},
               "routes/t11_lookup.ts": {"CWE-204", "T11"}, "lib/t12_audit.ts": {"CWE-532", "CWE-359", "T12"}}
 AI_SAFE = ["routes/s1_invoices.ts", "routes/s2_invoice.ts", "routes/s5_profile.ts", "lib/s6_cache.ts",
            "routes/s7_export.ts", "routes/s10_webhook.ts"]
@@ -91,6 +92,8 @@ def ai_bench():
             subprocess.run(cmd, cwd=d, check=True, env=env)
         rc = subprocess.run(["bash", str(ROOT / "scripts" / "run-full.sh"), str(d)], env=env).returncode
         found = [f for f in json.loads((d / ".cybersec" / "last_findings.json").read_text()) if f.get("source") == "agent"]
+        if os.environ.get("CYBERSEC_BENCH_OUT"):
+            shutil.copy(d / ".cybersec" / "last_findings.json", os.environ["CYBERSEC_BENCH_OUT"])
     hit = {k: any(f["file"] == k and f["class"] in v for f in found) for k, v in AI_PLANTED.items()}
     alarms = [f"{f['file']} {f['class']}" for f in found if f["file"] in AI_SAFE]
     gates = {"run_full_ok": rc == 0, "recall_9_of_10": sum(hit.values()) >= 9, "false_alarms_max_1": len(alarms) <= 1}
