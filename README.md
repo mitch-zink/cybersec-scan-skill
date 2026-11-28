@@ -131,7 +131,18 @@ System Settings > Privacy and Security > Full Disk Access > add `/bin/bash`.
 
 `python3 scripts/bench.py --ai` runs the AI reviewer on `tests/ai_bench` (10 planted tenant bugs, 6 safe twins). Gate: recall at least 9 of 10, at most 1 false alarm. It makes real Claude calls, so CI does not run it. Results are in `tests/RESULTS.md`.
 
-Real-world precision is measured by triage: `CS stats . --md` prints real, false positive, accepted and unreviewed counts per source. Do not report a precision figure without it.
+Real-world precision is measured by triage: `CS stats . --md` prints real, false positive, accepted and unreviewed counts per source.
+Measured on a dogfood run of a real production project (job-bot, 2026-11-28; hand review of each finding, live database as truth for SQL):
+
+| Source | Findings | Real | False positive | Accepted risk | Precision |
+|---|---|---|---|---|---|
+| agent (AI review, 620 files) | 19 | 18 | 0 | 1 (duplicate) | 1.00 |
+| gitleaks (current + history) | 24 | 19 | 0 | 5 (public or test keys) | 1.00 |
+| semgrep (code rules) | 3 | 3 | 0 | 0 | 1.00 |
+| sql (replay only, no live mode) | 25 | 10 | 6 | 9 | 0.62 |
+| osv, zizmor | 33, 85 | facts from lockfiles and workflows | | | not hand-rated |
+
+Before the dogfood rounds, secrets were 0 of 23 real and semgrep gave 13 findings. With live mode, the 6 SQL false positives drop out.
 
 ## Limits
 
