@@ -25,6 +25,7 @@ import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import batching  # noqa: E402
 import config  # noqa: E402
 import live  # noqa: E402
 import sql_state  # noqa: E402
@@ -37,7 +38,6 @@ TOOL_SOURCES = ("osv", "gitleaks", "gitleaks-history", "semgrep", "sql", "config
 REL = {k: pathlib.PurePosixPath(".cybersec", v) for k, v in {
     "state": "state.json", "findings": "last_findings.json", "incr": "incr.json", "batch": "batch.json",
     "progress": "progress.json", "verdicts": "verdicts.json", "report": "report.html"}.items()}
-PRIORITY = re.compile(r"auth|session|jwt|tenant|org|workspace|role|permission|admin|webhook|invite|token|middleware|route|api|rls|policy", re.I)
 IMPORT_RE = re.compile(r"^\s*(import\b|from\b|require\(|#include\b|use\b|@import\b)")
 REQUIRED = ("class", "file", "lines", "evidence", "control_checked")
 SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
@@ -166,7 +166,7 @@ def incr(root):
         return 3
     res = {"mode": "INCR", "base": st["data"]["last_sha"], "head": head, "changed": changed,
            "dependents": sorted(deps), "deleted": sorted(deleted), "read_set": read_set,
-           "hashes": {f: cur["hashes"][f] for f in read_set}}
+           "hashes": {f: cur["hashes"][f] for f in read_set}, "context": context(root, read_set)}
     write_json(p(root, "incr"), res)
     out(res)
     return 0
@@ -460,21 +460,31 @@ def batch_reset(root):
     return 0
 
 
+def context(root, read_set):
+    """What the agent gets with a read set: the newest table inventory and open tool findings in those files."""
+    tables = sorted(pathlib.Path(root, ".cybersec", "reports").glob("*-tools/sql_tables.json"))
+    rs = set(read_set)
+    return {"sql_tables": str(tables[-1]) if tables else None,
+            "tool_findings": [{k: f[k] for k in ("id", "source", "class", "file", "lines")}
+                              for f in read_json(p(root, "findings"), [])
+                              if source_of(f) in TOOL_SOURCES and f["file"] in rs]}
+
+
 def batch_next(root, max_files=FULL_CAP, priority_only=False, max_bytes=None):
-    """Next unread files (current hash not yet read). SQL is excluded: the SQL replay reads it."""
+    """Next unread files (current hash not yet read), by bytes, imports grouped. SQL is excluded: the replay reads it."""
     root = str(pathlib.Path(root).resolve())
     d = discover(root)
     prog, done = progress(root), progress_done(root, d)
-    pool = [f for f in non_sql(d) if f not in done]
+    todo = [f for f in non_sql(d) if f not in done]
+    sizes = {f: pathlib.Path(root, f).stat().st_size for f in todo}
     if priority_only:
-        pool = [f for f in pool if PRIORITY.search(f)]
-    todo = sorted(pool, key=lambda f: (0 if PRIORITY.search(f) else 1, f))
-    pick = todo[:min(max_files, FULL_CAP)]
-    batch = {"read_set": pick, "batch": prog["batches"] + 1}
+        todo = [f for f in todo if batching.rank(f, batching.score(batching.read(root, f))) == 0]
+    pick, info, used, est = batching.plan(root, todo, sizes, max_bytes or batching.MAX_BYTES, min(max_files, FULL_CAP))
+    batch = {"read_set": pick, "batch": prog["batches"] + 1, "bytes": used, "files": info, "context": context(root, pick)}
     write_json(p(root, "batch"), batch)
-    out({"batch": batch["batch"], "files": len(pick), "remaining_in_scope": len(todo) - len(pick),
-         "sql_replay_only": sum(f.endswith(".sql") for f in d["files"]), "total": d["count"],
-         "skipped": len(d["skipped"]), "read_set": pick})
+    out({"batch": batch["batch"], "files": len(pick), "bytes": used, "batches_estimate": est,
+         "remaining_in_scope": len(todo) - len(pick), "sql_replay_only": sum(f.endswith(".sql") for f in d["files"]),
+         "total": d["count"], "skipped": len(d["skipped"]), "read_set": pick})
     return 0
 
 

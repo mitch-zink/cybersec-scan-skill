@@ -248,6 +248,48 @@ class OsvTests(unittest.TestCase):
         self.assertEqual(enrich.LAST_NOTE, "")
 
 
+class BatchTests(Fixture):
+    def add(self, rel, text):
+        p = pathlib.Path(self.repo, rel)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text)
+        import subprocess
+        subprocess.run(["git", "add", "-A"], cwd=self.repo, check=True)
+
+    def test_batch_bytes(self):
+        for i in range(6):
+            self.add(f"lib/m{i}.py", "x = 1\n" * 5000)            # 30,000 bytes each
+        b = json.loads(run_cli("batch-next", self.repo, "--max-bytes", "70000")[1])
+        self.assertLessEqual(b["bytes"], 70000)
+        self.assertGreaterEqual(b["batches_estimate"], 3)
+
+    def test_batch_groups_imports(self):
+        self.add("src/routes/r.ts", "import { q } from '../lib/q';\nexport const r = () => q();\n")
+        self.add("src/lib/q.ts", "export const q = () => 1;\n")
+        b = json.loads(run_cli("batch-next", self.repo, "--max-files", "2")[1])
+        self.assertEqual(b["read_set"], ["app/api.py", "app/search.py"])        # python: from app.search import
+        rs = json.loads(run_cli("batch-next", self.repo)[1])["read_set"]
+        self.assertEqual(rs[rs.index("src/routes/r.ts") + 1], "src/lib/q.ts")   # ts: from '../lib/q'
+
+    def test_priority(self):
+        import batching
+        self.assertEqual(batching.rank("src/organize.ts", 0), 2)
+        self.assertEqual(batching.rank("src/lib/x.ts", batching.score("const c = supabaseAdmin.from('t')")), 0)
+        self.assertEqual(batching.rank("src/api/x.ts", 0), 0)
+
+    def test_batch_context(self):
+        self.write_tool_finding()
+        run_cli("batch-next", self.repo)
+        ctx = json.loads(pathlib.Path(self.repo, ".cybersec/batch.json").read_text())["context"]
+        self.assertEqual([f["id"] for f in ctx["tool_findings"]], ["F-tool"])
+
+    def write_tool_finding(self):
+        p = pathlib.Path(self.repo, ".cybersec", "last_findings.json")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps([{"id": "F-tool", "source": "semgrep", "class": "CWE-89", "file": "app/search.py",
+                                  "lines": "4-4", "evidence": "x", "severity": "high"}]))
+
+
 class ConfigTests(unittest.TestCase):
     def test_config_verify_jwt(self):
         samples = str(pathlib.Path(__file__).resolve().parent.parent / "rules" / "samples")
