@@ -107,6 +107,14 @@ class SqlRuleTests(unittest.TestCase):
         self.assertFalse(sql_rules(T + "CREATE VIEW public.v WITH (security_invoker = true) AS SELECT * FROM public.t;\n", "R9"))
         self.assertFalse(sql_rules(T + "CREATE VIEW public.v AS SELECT * FROM public.t;\nALTER VIEW public.v SET (security_invoker = on);\n", "R9"))
 
+    def test_pg_proc_revoke_loop(self):
+        fn = "CREATE FUNCTION public.{n}() RETURNS SETOF public.t LANGUAGE sql SECURITY DEFINER SET search_path = '' AS $$ SELECT * FROM public.t $$;\n"
+        loop = ("DO $$ DECLARE r record; BEGIN FOR r IN SELECT p.oid::regprocedure::text AS sig FROM pg_proc p "
+                "JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.prosecdef = true "
+                "LOOP EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC, anon, authenticated', r.sig); END LOOP; END $$;\n")
+        hits = sql_rules(T + fn.format(n="a") + loop + fn.format(n="b"), "R5")
+        self.assertEqual([h["function"] for h in hits], ["public.b"])     # a revoked by the loop; b created later
+
     def test_default_privileges_revoke(self):
         d = ("ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;\n"
              "CREATE TABLE public.z (id uuid, org_id uuid);\n")

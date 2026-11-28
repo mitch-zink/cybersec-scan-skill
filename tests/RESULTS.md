@@ -4,7 +4,7 @@
 |---|---|---|
 | Unit | `python3 tests/test_cyber_state.py` | 22 passed |
 | Regressions (20 v2 defects) | `python3 tests/test_regressions.py` | 21 passed (20 v2 defects, all failed on v2, plus agent-output checks) |
-| v3 steps | `python3 tests/test_v3.py` | 36 passed |
+| v3 steps | `python3 tests/test_v3.py` | 37 passed |
 | Bench gates | `python3 scripts/bench.py` | 9 of 9 true |
 | AI bench | `python3 scripts/bench.py --ai` | recall 10 of 10, 0 false alarms in 6 safe twins |
 
@@ -63,3 +63,12 @@ Repo-specific finding details are not recorded here. This repo is public.
 | `fetch` with a fixed host (`https://...`, `${BASE}/...`) flagged as SSRF | Sink only when the URL start is not fixed | |
 | `dangerouslySetInnerHTML` on `DOMPurify.sanitize` output | Skip sanitized values | |
 | | | semgrep findings 13 to 3; all 3 are true pattern hits |
+
+## Dogfood round 5: SQL replay R5 vs live (job-bot)
+
+| Change | R5 hits | Also callable live (true) |
+|---|---|---|
+| Before | 28 | 8 |
+| Replay models `FOR r IN SELECT ... FROM pg_proc ... LOOP GRANT/REVOKE` (filters: `prosecdef`, `proname IN`, `proname LIKE`) | 14 | 8 (no true hit lost) |
+
+The 6 left were created after the last sweep; the live catalog says no API role can call them. Live mode removes them.

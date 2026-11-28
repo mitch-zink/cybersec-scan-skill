@@ -19,6 +19,8 @@ GUARD = re.compile(r"auth\.uid\(\)|auth\.jwt\(\)|request\.jwt", I)
 WEAK = re.compile(r"\(*\s*(auth\.role\(\)\s*=\s*'authenticated'|\(?\s*(select\s+)?auth\.uid\(\)\s*\)?\s+is\s+not\s+null)\s*\)*", I)
 LOOP = re.compile(r"FOREACH\s+(\w+)\s+IN\s+ARRAY\s+ARRAY\s*\[(.*?)\]\s+LOOP(.*?)END\s+LOOP", S)
 FMT = re.compile(r"format\(\s*((?:'(?:[^']|'')*'\s*)+|\$(\w*)\$.*?\$\2\$)\s*,", S)
+PG_LOOP = re.compile(r"FOR\s+[\w\s,]+?\s+IN\s+SELECT(.*?)\bLOOP\b(.*?)END\s+LOOP", S)
+FN_PRIV = re.compile(r"(GRANT|REVOKE)\s+(?:EXECUTE|ALL(?:\s+PRIVILEGES)?)\s+ON\s+FUNCTION\s+.*?\s+(TO|FROM)\s+([\w\s,]+?)'", S)
 DIRECT = re.compile(r"\b(ALTER\s+TABLE|CREATE\s+POLICY|DROP\s+POLICY|GRANT|REVOKE)\b[^;]*", I)
 
 
@@ -331,6 +333,25 @@ class Replay:
                         sql = sql.replace("%I", name + (suffix.group(1) if suffix else ""), 1)
                     self.dispatch(sql.replace("%%", "%"), where, count=False)
                     n += 1
+        for sel, loop in PG_LOOP.findall(body):           # FOR r IN SELECT ... FROM pg_proc ... LOOP GRANT/REVOKE
+            if "pg_proc" not in sel or not (privs := FN_PRIV.findall(loop)):
+                continue
+            names = [q for q in self.funcs if q.startswith("public.")]
+            if re.search(r"prosecdef(\s*=\s*true)?\b(?!\s*=\s*false)", sel, I):
+                names = [q for q in names if self.funcs[q]["definer"]]
+            if (inl := re.search(r"proname\s+IN\s*\((.*?)\)", sel, S | I)):
+                keep = {x.lower() for x in re.findall(r"'([^']+)'", inl.group(1))}
+                names = [q for q in names if q.split(".", 1)[1] in keep]
+            likes = [re.escape(x).replace("\\\\_", "_").replace("%", ".*").replace("\\_", "_")
+                     for x in re.findall(r"proname\s+(?:NOT\s+)?LIKE\s+'([^']+)'", sel, I)]
+            if likes:
+                names = [q for q in names if any(re.fullmatch(lk, q.split(".", 1)[1]) for lk in likes)]
+            for verb, _, roles in privs:
+                for q in names:
+                    rr = _roles(roles)
+                    self.funcs[q]["exec_roles"] = (self.funcs[q]["exec_roles"] | rr) if verb.upper() == "GRANT" \
+                        else (self.funcs[q]["exec_roles"] - rr)
+            n += 1
         for d in DIRECT.finditer(body):
             if "%" not in d.group(0):
                 self.dispatch(d.group(0), where, count=False)
