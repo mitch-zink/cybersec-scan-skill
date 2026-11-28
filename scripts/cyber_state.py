@@ -247,6 +247,9 @@ def merge(root, candidates_file, scope_file=None):
     everything = apply_verdicts(root, out + carried + tool_prev)
     prev_path.parent.mkdir(parents=True, exist_ok=True)
     prev_path.write_text(json.dumps(everything, indent=2))
+    tools.build_html(everything, {"repo": pathlib.Path(root).name, "mode": "REVIEW", "date": tools.utc_now(),
+                                  "scanners": "agent review, saved tool results"},
+                     [f"Fixed in this merge: {len(fixed)}."], pathlib.Path(root, ".cybersec", "report.html"))
     print(json.dumps({"findings": everything, "fixed": fixed}, indent=2))
     return 0
 
