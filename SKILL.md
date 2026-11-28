@@ -36,7 +36,8 @@ When complete, run `python3 ... save . FULL <N>`, where N is the number of files
 3. `merge . .cybersec/candidates.json --scope .cybersec/incr.json`, then `save . INCR <N>`.
 
 ## Verdicts
-- Reviewer marks a finding: `python3 ... verdict . <id> real|false_positive|accepted_risk "<reason>"`.
+- The agent never sets a verdict. Never run the `verdict` command yourself. Put a suggested verdict and reason in the report.
+- Only the owner sets a verdict: `python3 ... verdict . <id> real|false_positive|accepted_risk "<reason>"`.
 - A verdict stays while the finding id stays. A changed line changes the id, and the verdict clears.
 - `false_positive` findings are hidden from the report. The count stays visible.
 
