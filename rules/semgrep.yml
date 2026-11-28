@@ -44,10 +44,12 @@ rules:
     severity: ERROR
     message: Shell command built from a string or run with shell=True.
     metadata: {cwe: CWE-78, owasp: A05, fix: "Pass an argument list and do not use shell=True."}
-    pattern-either:
-      - pattern: os.system(f"...")
-      - pattern: os.system("..." + $X)
-      - pattern: subprocess.$F(..., shell=True, ...)
+    patterns:
+      - pattern-either:
+          - pattern: os.system(f"...")
+          - pattern: os.system("..." + $X)
+          - pattern: subprocess.$F(..., shell=True, ...)
+      - pattern-not: os.system("..." + shlex.quote(...))
   - id: path-join-open-py
     languages: [python]
     severity: WARNING
@@ -99,3 +101,96 @@ rules:
     message: Raw HTML inserted into the page. Check the input is escaped or trusted.
     metadata: {cwe: CWE-79, owasp: A05, fix: "Render text as children. Sanitize HTML with a vetted library if HTML is needed."}
     pattern: "<$E dangerouslySetInnerHTML={{__html: $X}} />"
+  - id: taint-sql-py
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: Request data reaches a SQL string. Use bound parameters.
+    metadata: {cwe: CWE-89, owasp: A05, fix: "Pass request values as bound parameters."}
+    pattern-sources:
+      - pattern-either:
+          - pattern: request.args
+          - pattern: request.form
+          - pattern: request.values
+          - pattern: request.get_json(...)
+          - pattern: request.json
+    pattern-sanitizers:
+      - pattern: int(...)
+    pattern-sinks:
+      - patterns:
+          - pattern: $C.execute($Q, ...)
+          - focus-metavariable: $Q
+  - id: taint-cmd-py
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: Request data reaches a shell command.
+    metadata: {cwe: CWE-78, owasp: A05, fix: "Pass an argument list. Do not build a command string from request data."}
+    pattern-sources:
+      - pattern-either:
+          - pattern: request.args
+          - pattern: request.form
+          - pattern: request.get_json(...)
+    pattern-sanitizers:
+      - pattern: shlex.quote(...)
+    pattern-sinks:
+      - pattern-either:
+          - pattern: os.system(...)
+          - pattern: subprocess.$F(..., shell=True, ...)
+  - id: taint-sql-js
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Request data reaches a SQL string. Use bound parameters.
+    metadata: {cwe: CWE-89, owasp: A05, fix: "Pass request values as bound parameters."}
+    pattern-sources:
+      - pattern-either:
+          - pattern: $REQ.body
+          - pattern: $REQ.query
+          - pattern: $REQ.params
+          - pattern: await $REQ.json()
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $DB.query($Q, ...)
+              - pattern: $DB.raw($Q, ...)
+              - pattern: $DB.execute($Q, ...)
+          - focus-metavariable: $Q
+  - id: taint-ssrf-js
+    mode: taint
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: Request data sets the URL of an outbound request. Check the host allowlist.
+    metadata: {cwe: CWE-918, owasp: A01, fix: "Allow only known hosts. Block private address ranges."}
+    pattern-sources:
+      - pattern-either:
+          - pattern: $REQ.body
+          - pattern: $REQ.query
+          - pattern: await $REQ.json()
+    pattern-sinks:
+      - patterns:
+          - pattern: fetch($U, ...)
+          - focus-metavariable: $U
+  - id: supabase-service-key-client
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Service-role key used in client code. It bypasses row-level security for every visitor.
+    metadata: {cwe: CWE-798, owasp: A01, fix: "Use the anon or publishable key in the browser. Keep the service key on the server."}
+    paths:
+      include: ["src/", "app/", "pages/", "components/"]
+      exclude: ["*.test.*", "*.spec.*"]
+    pattern-either:
+      - patterns:
+          - pattern: import.meta.env.$V
+          - metavariable-regex: {metavariable: $V, regex: '(?i).*service_?role.*'}
+      - patterns:
+          - pattern: process.env.$V
+          - metavariable-regex: {metavariable: $V, regex: '(?i)^(NEXT_PUBLIC|VITE|REACT_APP|EXPO_PUBLIC)_.*service_?role.*'}
+  - id: supabase-cors-wildcard
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: CORS allows every origin. Check that the function needs no cookie or user session.
+    metadata: {cwe: CWE-942, owasp: A02, fix: "Set Access-Control-Allow-Origin to the app's own origins."}
+    pattern-either:
+      - pattern: '{..., "Access-Control-Allow-Origin": "*", ...}'
+      - pattern: '{..., "access-control-allow-origin": "*", ...}'

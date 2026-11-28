@@ -168,6 +168,35 @@ def semgrep_findings(root, cfg):
                     "lines": f"{line}-{r.get('end', {}).get('line', line)}", "evidence": f"{cid} {rp}:{line}",
                     "fp": f"{cid}|{rp}|{hashlib.sha1(r.get('extra', {}).get('lines', '').encode()).hexdigest()}",
                     "fix_hint": meta.get("fix", r.get("extra", {}).get("message", ""))})
+    best = {}
+    for f in out:   # one finding per file, start line and CWE: taint rules win over pattern rules
+        k = (f["file"], f["lines"].split("-")[0], f["class"])
+        if k not in best or f["evidence"].startswith("taint-"):
+            best[k] = f
+    return "ran", list(best.values())
+
+
+def config_findings(root, cfg):
+    """supabase/config.toml: functions with verify_jwt = false."""
+    import tomllib
+    out = []
+    for p in sorted(pathlib.Path(root).rglob("supabase/config.toml")):
+        rp = rel(root, p)
+        if config.vendor_skipped(rp, cfg):
+            continue
+        try:
+            text = p.read_text()
+            funcs = tomllib.loads(text).get("functions", {})
+        except (OSError, ValueError):
+            continue
+        lines = text.splitlines()
+        for name, conf in funcs.items():
+            if isinstance(conf, dict) and conf.get("verify_jwt") is False:
+                line = next((i for i, ln in enumerate(lines, 1) if ln.strip() in (f"[functions.{name}]", f'[functions."{name}"]')), 1)
+                out.append({"source": "config", "owasp": "A07", "class": "CWE-306", "severity": "medium",
+                            "confidence": "confirmed", "scope": "current", "file": rp, "lines": str(line),
+                            "evidence": f"verify_jwt = false for function {name}", "fp": f"verify_jwt|{name}",
+                            "fix_hint": "Check the caller's JWT inside the function, or set verify_jwt = true."})
     return "ran", out
 
 

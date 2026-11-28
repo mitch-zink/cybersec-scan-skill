@@ -1,0 +1,5 @@
+[functions.open-hook]
+verify_jwt = false
+
+[functions.safe-hook]
+verify_jwt = true

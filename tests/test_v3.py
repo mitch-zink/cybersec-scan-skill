@@ -248,5 +248,14 @@ class OsvTests(unittest.TestCase):
         self.assertEqual(enrich.LAST_NOTE, "")
 
 
+class ConfigTests(unittest.TestCase):
+    def test_config_verify_jwt(self):
+        samples = str(pathlib.Path(__file__).resolve().parent.parent / "rules" / "samples")
+        st, f = tools.config_findings(samples, {"skip_tests": False})
+        self.assertEqual(st, "ran")
+        self.assertEqual([(x["file"], x["lines"], x["evidence"]) for x in f],
+                         [("supabase/config.toml", "1", "verify_jwt = false for function open-hook")])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -385,7 +385,8 @@ def scan_tools(root, history=True, fail_on="none", force_live=False):
             "gitleaks": lambda: tools.gitleaks_findings(root, cfg, history=False),
             "gitleaks-history": (lambda: tools.gitleaks_findings(root, cfg, history=True)) if history and is_git(root)
             else (lambda: ("off", [])),
-            "semgrep": lambda: tools.semgrep_findings(root, cfg)}
+            "semgrep": lambda: tools.semgrep_findings(root, cfg),
+            "config": lambda: tools.config_findings(root, cfg)}
     for name, job in jobs.items():
         ran[name], f = job()
         cands += f
