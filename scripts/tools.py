@@ -176,15 +176,15 @@ h1{{font-size:20px;margin:0 0 4px}} .sub{{color:#5b6577;margin-bottom:16px}}
 .card b{{display:block;font-size:22px}} .sev{{padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;color:#fff}}
 .critical{{background:#7a1020}} .high{{background:#c2410c}} .medium{{background:#b45309}} .low{{background:#4b5563}}
 table{{border-collapse:collapse;width:100%;background:#fff;font-size:13px}} th,td{{border:1px solid #d9dee8;padding:6px 8px;text-align:left;vertical-align:top}}
-th{{background:#eef1f7}} code{{font-size:12px}} button{{font-size:11px}} .notes{{color:#5b6577;font-size:12px}}
+th{{background:#eef1f7}} code{{font-size:12px}} button{{font-size:11px}} .notes{{color:#5b6577;font-size:12px}} .wrap{{overflow-x:auto;max-width:100%}}
 @media (prefers-color-scheme: dark){{body{{color:#e6e9f0;background:#14171f}} .card,table{{background:#1d2330}} th{{background:#252c3b}} th,td,.card{{border-color:#2e3646}}}}
 </style></head><body>
 <h1>Security scan: {H.escape(meta['repo'])}</h1>
 <div class="sub">Mode: {H.escape(meta['mode'])} · Date: {H.escape(meta['date'])} · Scanners: {H.escape(meta['scanners'])} · Hidden as false positive: {hidden}</div>
 <div class="cards">{cards}</div>
 <label>Severity <select id="f"><option value="">all</option>{''.join(f'<option>{s}</option>' for s in SEV_ORDER)}</select></label>
-<table><thead><tr><th>Severity</th><th>Class</th><th>OWASP 2025</th><th>Source</th><th>Scope</th><th>File</th><th>Evidence</th><th>Fix</th><th>Verdict</th></tr></thead>
-<tbody id="rows">{''.join(rows)}</tbody></table>{more}
+<div class="wrap"><table><thead><tr><th>Severity</th><th>Class</th><th>OWASP 2025</th><th>Source</th><th>Scope</th><th>File</th><th>Evidence</th><th>Fix</th><th>Verdict</th></tr></thead>
+<tbody id="rows">{''.join(rows)}</tbody></table></div>{more}
 <h3>Coverage and tools</h3><ul class="notes">{note_items}</ul>
 <script>
 document.getElementById('f').addEventListener('change',e=>{{const v=e.target.value;
