@@ -191,5 +191,30 @@ class MergeTests(Fixture):
         self.assertEqual(len(set(ids)), 2)
 
 
+class ToolTests(Fixture):
+    def test_html_escapes_untrusted_text(self):
+        import tools
+        f = [{"severity": "high", "class": "<script>x</script>", "owasp": "A05", "source": "agent",
+              "file": "a.py", "lines": "1-1", "evidence": "<img onerror=1>", "fix_hint": "",
+              "status": "new"}]
+        page = tools.html_report(f, {"repo": "r", "mode": "FULL", "date": "d", "scanners": "s"}, [])
+        self.assertNotIn("<script>x", page)
+        self.assertIn("&lt;script&gt;x&lt;/script&gt;", page)
+
+    def test_tool_findings_survive_agent_merge(self):
+        tool = {"class": "CVE-2025-1", "file": "package-lock.json", "lines": "-",
+                "evidence": "pkg@1 CVE-2025-1", "severity": "high", "source": "osv"}
+        p = os.path.join(self.tmp, "c.json")
+        pathlib.Path(p).write_text(json.dumps([tool]))
+        pathlib.Path(self.repo, ".cybersec").mkdir()
+        pathlib.Path(self.repo, ".cybersec", "last_findings.json").write_text(
+            json.dumps([dict(tool, id="F-tool", status="open")]))
+        empty = os.path.join(self.tmp, "none.json")
+        pathlib.Path(empty).write_text("[]")
+        res = json.loads(run_cli("merge", self.repo, empty)[1])
+        self.assertEqual(res["fixed"], [])
+        self.assertIn("F-tool", [f["id"] for f in res["findings"]])
+
+
 if __name__ == "__main__":
     unittest.main()
