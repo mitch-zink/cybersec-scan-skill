@@ -12,6 +12,8 @@ import subprocess
 import tempfile
 
 import config
+import enrich
+import lockscope
 
 HERE = pathlib.Path(__file__).resolve().parent
 RULES = HERE.parent / "rules" / "semgrep.yml"
@@ -69,42 +71,55 @@ def rel(root, p):
         return str(p)
 
 
-def _npm_scope(lockfile, name):
-    """'prod' if the package is not dev-only in this npm lockfile, 'dev' if dev-only, else 'unknown'."""
+def _cvss_sev(score):
     try:
-        pk = json.loads(pathlib.Path(lockfile).read_text()).get("packages", {})
-    except (OSError, json.JSONDecodeError):
-        return "unknown"
-    entries = [v for k, v in pk.items() if k.endswith("node_modules/" + name)]
-    if not entries:
-        return "unknown"
-    return "prod" if any(not (v.get("dev") or v.get("devOptional")) for v in entries) else "dev"
+        x = float(score)
+    except (TypeError, ValueError):
+        return None
+    return "critical" if x >= 9 else "high" if x >= 7 else "medium" if x >= 4 else "low" if x > 0 else None
+
+
+def _fixed(vulns, name):
+    out = {e["fixed"] for v in vulns for a in v.get("affected", [])
+           if a.get("package", {}).get("name", "").lower() == name.lower()
+           for r in a.get("ranges", []) if r.get("type") in ("ECOSYSTEM", "SEMVER")
+           for e in r.get("events", []) if "fixed" in e}
+    return sorted(out)
 
 
 def osv_findings(root, cfg):
-    """Dependency CVEs, medium and above."""
+    """Dependency CVEs, medium and above: one finding per OSV advisory group."""
     st, data = _call("osv-scanner", ["osv-scanner", "scan", "source", "-r", "--format", "json", str(root)],
                      "--output-file", cfg, "osv", (0, 1, 128))   # 1 = found, 128 = no lockfiles
     if st != "ran":
         return st, []
     out = []
     for res in (data or {}).get("results", []):
-        src = res.get("source", {}).get("path", "?")
-        rp = rel(root, src)
+        rp = rel(root, res.get("source", {}).get("path", "?"))
         if config.vendor_skipped(rp, cfg):
             continue
         for pkg in res.get("packages", []):
             name, ver = pkg["package"]["name"], pkg["package"]["version"]
-            scope = _npm_scope(pathlib.Path(root, rp), name) if rp.endswith("package-lock.json") else "unknown"
-            for v in pkg.get("vulnerabilities", []):
-                sev = SEV_MAP.get(str(v.get("database_specific", {}).get("severity", "")).upper(), "medium")
+            by_id = {v["id"]: v for v in pkg.get("vulnerabilities", [])}
+            for g in pkg.get("groups") or [{"ids": [i]} for i in by_id]:
+                vulns = [by_id[i] for i in g["ids"] if i in by_id]
+                sev, conf = _cvss_sev(g.get("max_severity")), "confirmed"
+                if sev is None:
+                    sev = next((SEV_MAP[s] for v in vulns if (s := str(v.get("database_specific", {}).get("severity", "")).upper()) in SEV_MAP), None)
+                if sev is None:
+                    sev, conf = "medium", "likely"
                 if sev == "low":
                     continue
-                cve = next((a for a in v.get("aliases", []) if a.startswith("CVE-")), v["id"])
-                out.append({"source": "osv", "owasp": "A03", "class": cve, "severity": sev,
-                            "confidence": "confirmed", "scope": scope, "file": rp, "lines": "-",
-                            "evidence": f"{name}@{ver} {cve}", "fp": f"{name}@{ver}",
-                            "fix_hint": f"Upgrade {name} past {ver}. {v.get('summary', '')}".strip()})
+                aliases = g.get("aliases") or [a for v in vulns for a in [v["id"], *v.get("aliases", [])]]
+                cls = next((a for a in aliases if a.startswith("CVE-")), g["ids"][0])
+                fixed = _fixed(vulns, name)
+                out.append({"source": "osv", "owasp": "A03", "class": cls, "severity": sev, "confidence": conf,
+                            "scope": lockscope.scope(pathlib.Path(root, rp), name), "file": rp, "lines": "-",
+                            "evidence": f"{name}@{ver} {cls}", "fp": f"{name}|{cls}",
+                            "fix_hint": f"Upgrade {name} from {ver}." + (f" Fixed in: {', '.join(fixed)}." if fixed else " No fixed version listed."),
+                            "summary": next((v.get("summary", "") for v in vulns if v.get("summary")), "")})
+    if cfg.get("osv_enrich", True):
+        enrich.apply(out)
     return "ran", out
 
 

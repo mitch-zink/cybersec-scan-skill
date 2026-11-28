@@ -418,7 +418,8 @@ def scan_tools(root, history=True, fail_on="none", force_live=False):
               f"{sql_meta.get('tenant_tables', 0)} with tenant columns, {sql_meta.get('do_expanded', 0)} DO loops expanded, "
               f"{sql_meta.get('unparsed', 0)} relevant statements not parsed"
               + (f" ({100 * sql_meta.get('unparsed', 0) / rel_total:.1f}%)." if rel_total else "."),
-              *live_notes, "Skipped paths: see .cybersec/config.toml.",
+              *live_notes, *([tools.enrich.LAST_NOTE] if tools.enrich.LAST_NOTE else []),
+              "Skipped paths: see .cybersec/config.toml.",
               f"Agent findings carried over: {len(agents)}. Fixed since last tool run: {len(fixed)}."]
     warnings = [n for n in notes if "NOT RUN" in n]
     if warnings:

@@ -175,5 +175,78 @@ else:
         self.assertTrue(all("default_transaction_read_only=on" in ln for ln in open(log).read().splitlines()))
 
 
+UV_LOCK = """version = 1
+[[package]]
+name = "app"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [{ name = "requests" }]
+[package.dev-dependencies]
+dev = [{ name = "pytest" }]
+[[package]]
+name = "requests"
+version = "2.19.0"
+dependencies = [{ name = "urllib3" }]
+[[package]]
+name = "urllib3"
+version = "1.0"
+[[package]]
+name = "pytest"
+version = "8.0"
+"""
+
+
+class OsvTests(unittest.TestCase):
+    def osv(self, enrich=False):
+        d = tempfile.mkdtemp()
+        shutil.copy(DATA / "poetry.lock", d)
+        data = json.loads((DATA / "osv_requests.json").read_text())
+        which, run = tools.shutil.which, tools._run
+        tools.shutil.which, tools._run = (lambda t: "/x/" + t), (lambda *a, **k: ("ok", 1, data))
+        try:
+            return tools.osv_findings(d, {"skip_tests": True, "osv_enrich": enrich})[1], data
+        finally:
+            tools.shutil.which, tools._run = which, run
+
+    def test_osv_groups(self):
+        found, data = self.osv()
+        groups = sum(len(p["groups"]) for r in data["results"] for p in r["packages"])
+        sevs = {f["class"]: f["severity"] for f in found}
+        self.assertEqual(len(found), groups)            # no group is low in this fixture
+        self.assertEqual(sevs["CVE-2018-18074"], "high")
+        self.assertEqual({f["scope"] for f in found if f["evidence"].startswith("requests")}, {"prod"})
+        self.assertEqual({f["scope"] for f in found if f["evidence"].startswith("pyyaml")}, {"dev"})
+        self.assertTrue(all(f["fp"].count("|") == 1 for f in found))
+
+    def test_lockscope_poetry(self):
+        import lockscope
+        self.assertEqual(lockscope.scope(DATA / "poetry.lock", "requests"), "prod")
+        self.assertEqual(lockscope.scope(DATA / "poetry.lock", "PyYAML"), "dev")
+        self.assertEqual(lockscope.scope(DATA / "poetry.lock", "nope"), "unknown")
+
+    def test_lockscope_uv(self):
+        import lockscope
+        p = pathlib.Path(tempfile.mkdtemp(), "uv.lock")
+        p.write_text(UV_LOCK)
+        self.assertEqual([lockscope.scope(p, n) for n in ("requests", "urllib3", "pytest")], ["prod", "prod", "dev"])
+
+    def test_enrich_cache(self):
+        import datetime
+        import enrich
+        cache = pathlib.Path(tempfile.mkdtemp())
+        (cache / "kev.json").write_text(json.dumps({"vulnerabilities": [{"cveID": "CVE-2018-18074"}]}))
+        (cache / f"epss-{datetime.date.today().isoformat()}.json").write_text(json.dumps({"CVE-2018-18074": 0.07, "CVE-2020-1747": 0.9}))
+        found = [{"class": "CVE-2018-18074", "severity": "high"}, {"class": "CVE-2020-1747", "severity": "critical"}]
+        get, enrich._get = enrich._get, (lambda url: (_ for _ in ()).throw(OSError("offline")))
+        try:
+            enrich.apply(found, cache)
+        finally:
+            enrich._get = get
+        self.assertEqual(found[0]["severity"], "critical")       # KEV raises it
+        self.assertTrue(found[0]["kev"])
+        self.assertEqual(found[1]["epss"], 0.9)
+        self.assertEqual(enrich.LAST_NOTE, "")
+
+
 if __name__ == "__main__":
     unittest.main()
