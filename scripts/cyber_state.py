@@ -375,7 +375,8 @@ def status_note(name, st, cfg):
     if st == "missing" and name.startswith("live"):
         return f"{name}: NOT RUN ({'psql not installed' if name == 'live-catalog' else 'no URL or anon key; see [live] in config.toml'})"
     if st == "missing":
-        return f"{name}: NOT RUN (missing; install: {tools.PREREQ_HINT})"
+        pkg = "osv-scanner" if name == "osv" else name.split("-")[0]
+        return f"{name}: NOT RUN (missing; install: brew install {pkg})"
     return f"{name}: NOT RUN (error)"
 
 
@@ -436,7 +437,7 @@ def scan_tools(root, history=True, fail_on="none", force_live=False):
     meta = {"repo": pathlib.Path(root).name, "mode": "TOOLS", "date": tools.utc_now(),
             "scanners": ", ".join(k for k, v in ran.items() if v == "ran")}
     for path in (d / "report.html", p(root, "report")):
-        tools.build_html(everything, meta, notes, path, root, warnings)
+        tools.build_html(everything, meta, notes, path, root, warnings, live_notes)
     hot = [f for f in fresh if f["status"] == "new" and f["verdict"] == "new"
            and SEV_RANK.get(f["severity"], 9) <= SEV_RANK.get(fail_on, -1)]
     rc = 6 if hot else 0

@@ -9,8 +9,11 @@ disallowed-tools: Agent
 # cybersec-scan
 
 One agent does the review. Do not start sub-agents. Do not run the scanned code. Do not install dependencies.
-Helper: `python3 ${CLAUDE_SKILL_DIR}/scripts/cyber_state.py` (below: `CS`). Checklist: `${CLAUDE_SKILL_DIR}/docs/checklist.md`.
-Scope is the current folder. Confirm it with `pwd`. Write only under `.cybersec/`. Use the Write tool for files.
+Helper: `python3 ${CLAUDE_SKILL_DIR}/scripts/cyber_state.py`. Checklist: `${CLAUDE_SKILL_DIR}/docs/checklist.md`.
+Below, `CS x` means: one Bash call with exactly `python3 ${CLAUDE_SKILL_DIR}/scripts/cyber_state.py x`.
+Never use shell variables, `;`, `&&`, `|`, `cd` or `echo` in these calls: the permission rules allow only the plain command.
+Scope is the current folder (the helper prints the root). Write only under `.cybersec/`. Use the Write tool for files.
+If a call is denied, do not stop: check the command against the line above and run it again in the plain form.
 
 | Mode | Steps |
 |---|---|

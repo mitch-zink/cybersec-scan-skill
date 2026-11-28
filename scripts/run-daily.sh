@@ -19,7 +19,7 @@ while IFS= read -r repo; do
   [ -z "$repo" ] && continue
   echo "$(ts) START $repo" >> "$LOG"
   if ( cd "$repo" && python3 "$PY" tools . >> "$LOG" 2>&1 \
-        && claude -p "/cybersec-scan incremental-only" \
+        && claude -p "/cybersec-scan incremental-only" --strict-mcp-config < /dev/null \
            --permission-mode dontAsk \
            --tools "Read,Glob,Grep,Write,Edit,Bash" \
            --allowedTools "Read" "Glob" "Grep" "Edit(./.cybersec/**)" "Bash(python3 $PY *)" \

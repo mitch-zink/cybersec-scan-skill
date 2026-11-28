@@ -11,7 +11,7 @@ while :; do
   n=$(python3 "$PY" batch-next . | python3 -c 'import json,sys; print(json.load(sys.stdin)["files"])')
   [ "$n" = "0" ] && break
   before=$(python3 -c 'import json; print(json.load(open(".cybersec/progress.json")).get("batches", 0))' 2>/dev/null || echo 0)
-  claude -p "/cybersec-scan batch" \
+  claude -p "/cybersec-scan batch" --strict-mcp-config < /dev/null \
     --permission-mode dontAsk \
     --tools "Read,Glob,Grep,Write,Edit,Bash" \
     --allowedTools "Read" "Glob" "Grep" "Edit(./.cybersec/**)" "Bash(python3 $PY *)" \

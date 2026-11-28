@@ -269,7 +269,7 @@ def _sev_key(f):
             -float(f.get("epss") or 0), f.get("id", ""))
 
 
-def html_report(findings, meta, notes, root=".", max_rows=500, warnings=()):
+def html_report(findings, meta, notes, root=".", max_rows=500, warnings=(), info=()):
     """One static page: open findings, a fixed section, tool warnings and coverage notes."""
     e = lambda s: H.escape(str(s))  # noqa: E731
     fixed = [f for f in findings if f.get("status") == "fixed"]
@@ -295,6 +295,7 @@ def html_report(findings, meta, notes, root=".", max_rows=500, warnings=()):
     counts = {s: sum(1 for f in visible if f["severity"] == s) for s in SEV_ORDER}
     cards = "".join(f'<div class="card"><b>{counts[s]}</b><span class="sev {s}">{s}</span></div>' for s in SEV_ORDER)
     banners = "".join(f'<div class="banner warn">{e(w)}</div>' for w in warnings)
+    banners += "".join(f'<div class="banner info">{e(i)}</div>' for i in info)
     if not visible:
         banners += f'<div class="banner ok"><b>No open findings.</b> Hidden as false positive: {hidden}.</div>'
     table = "" if not visible else (
@@ -343,6 +344,6 @@ function cp(b){{navigator.clipboard&&navigator.clipboard.writeText(b.dataset.cmd
 </script></body></html>"""
 
 
-def build_html(findings, meta, notes, path, root=".", warnings=()):
-    pathlib.Path(path).write_text(html_report(findings, meta, notes, root, warnings=warnings))
+def build_html(findings, meta, notes, path, root=".", warnings=(), info=()):
+    pathlib.Path(path).write_text(html_report(findings, meta, notes, root, warnings=warnings, info=info))
     return str(path)
