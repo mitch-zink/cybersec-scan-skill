@@ -45,3 +45,30 @@ id, severity, class (CWE), owasp (A-code), file, lines, source-to-sink path, evi
 - One file. No new dependency. At most 80 changed lines.
 - Never run the patch or the code. Check the diff with `git apply --check` only.
 - Include one command that shows the fix (for example a grep that returns nothing).
+
+## Multi-tenant isolation (SaaS)
+Map to A01 unless noted. Check every tenant-scoped resource.
+
+| # | Check | Look for |
+|---|---|---|
+| T1 | Tenant ID source | Tenant ID read from request body, URL, or header instead of the verified session or token claim |
+| T2 | Query scope | ORM, raw SQL, or RPC on a tenant table with no tenant filter |
+| T3 | RLS enabled | Table with a tenant column and RLS disabled (see SQL pass) |
+| T4 | RLS policy strength | Policy `USING (true)`, missing policy for INSERT, UPDATE, or DELETE, or policy based on a client value |
+| T5 | Privileged bypass | Service-role or admin key used on a user-facing path; `SECURITY DEFINER` function with no tenant check |
+| T6 | Shared keys | Cache key, rate-limit key, queue payload, storage path, search index, or object key without tenant ID |
+| T7 | Bulk and admin | Export, list, or admin endpoint that takes a tenant parameter without a membership check |
+| T8 | Context leakage | Session setting (for example `SET app.tenant`) not reset; worker or background job without tenant context; singleton holding per-user state |
+| T9 | Membership and invites | Invite accepted for a tenant the user does not belong to; role change that crosses tenants |
+| T10 | Webhooks and callbacks | Inbound webhook not bound to one tenant before the write |
+| T11 | Enumeration | Sequential IDs or distinct errors that reveal another tenant's record exists |
+| T12 | Leakage | Tenant data in logs, error messages, analytics events, emails, or cross-tenant search results |
+
+## SQL and RLS pass (A01, A05)
+Read migrations and schema files directly. Do not rely on the code graph for SQL.
+1. Find every `CREATE TABLE` or `ALTER TABLE` with a tenant column (`tenant_id`, `org_id`, `workspace_id`, or similar).
+2. Confirm `ENABLE ROW LEVEL SECURITY` and at least one policy per command used by the app.
+3. Read each policy. Flag `USING (true)`, `WITH CHECK (true)`, or a predicate that uses a client-supplied value.
+4. List every `SECURITY DEFINER` function. Confirm it checks the caller's tenant before it reads or writes tenant data.
+5. Flag grants to `anon` or `public` roles on tenant tables.
+6. Record each table as: RLS on or off, policies found, risk.
