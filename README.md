@@ -167,6 +167,23 @@ python3 scripts/bench.py               # scorecard gates
 
 CI runs all test suites and the bench gates on every pull request (`.github/workflows/test.yml`), with gitleaks 8.30.1 and semgrep 1.187.0 pinned.
 
+## Inspiration and sources
+
+| Source | What we took from it |
+|---|---|
+| [OWASP Top 10:2025](https://owasp.org/Top10/2025/) and [CWE](https://cwe.mitre.org/) | The classes the AI reviewer checks (A01-A10) and the class id on every finding |
+| [Supabase Security Advisor](https://supabase.com/docs/guides/monitoring-and-debugging/advisors) and its linter [splinter](https://github.com/supabase/splinter) | The database rules: RLS off in public (0013), security definer views (0010), mutable `search_path` (0011). Live checks L1-L4 use the same catalog facts |
+| [OSV-Scanner](https://google.github.io/osv-scanner/) | Dependency CVEs and advisory groups |
+| [gitleaks](https://github.com/gitleaks/gitleaks) | Secrets in files and git history |
+| [Semgrep](https://semgrep.dev/docs/writing-rules/data-flow/taint-mode) | Code rules; taint mode for request data flows |
+| [zizmor](https://docs.zizmor.sh/) | GitHub Actions audits |
+| [Trivy](https://trivy.dev/) | Dockerfile, Terraform and Kubernetes checks |
+| [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) and [FIRST EPSS](https://www.first.org/epss/) | Which CVEs to fix first |
+| [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html) | The export format for code scanning |
+| [Claude Code skills](https://code.claude.com/docs/en/skills) | The skill format and the permission rules for unattended runs |
+
+The multi-tenant checks (T1-T12) and the v3 fixes come from our own reviews of this tool and from dogfood runs on our own projects (`tests/RESULTS.md`).
+
 ## License
 
 MIT. See LICENSE.
