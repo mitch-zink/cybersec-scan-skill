@@ -37,8 +37,10 @@ Dependency CVE findings come from a deterministic tool (for example OSV-Scanner)
 
 Report medium, high, and critical. Put low findings in Coverage only.
 
-## Output fields (per finding)
-id, severity, class (CWE), owasp (A-code), file, lines, source-to-sink path, evidence quote, attack scenario (one sentence), fix hint, confidence.
+## Output fields (per candidate)
+class (CWE), owasp (A-code), file, lines, symbol (enclosing function or class), evidence (exact text in the file),
+severity, confidence, control_checked (the control searched for, where, and why it does not block), fix_hint.
+The helper assigns the id. Merge rejects a candidate whose evidence is not in the file or whose control_checked is empty.
 
 ## Fix patch rules
 - Smallest change that removes the class. Keep behavior for valid input.
@@ -64,11 +66,19 @@ Map to A01 unless noted. Check every tenant-scoped resource.
 | T11 | Enumeration | Sequential IDs or distinct errors that reveal another tenant's record exists |
 | T12 | Leakage | Tenant data in logs, error messages, analytics events, emails, or cross-tenant search results |
 
-## SQL and RLS pass (A01, A05)
-Read migrations and schema files directly. Do not rely on the code graph for SQL.
-1. Find every `CREATE TABLE` or `ALTER TABLE` with a tenant column (`tenant_id`, `org_id`, `workspace_id`, or similar).
-2. Confirm `ENABLE ROW LEVEL SECURITY` and at least one policy per command used by the app.
-3. Read each policy. Flag `USING (true)`, `WITH CHECK (true)`, or a predicate that uses a client-supplied value.
-4. List every `SECURITY DEFINER` function. Confirm it checks the caller's tenant before it reads or writes tenant data.
-5. Flag grants to `anon` or `public` roles on tenant tables.
-6. Record each table as: RLS on or off, policies found, risk.
+## SQL and RLS rules (tools, not the agent)
+The SQL replay and live mode report these. The agent reads `context.sql_tables` and does not repeat them.
+
+| Rule | Fires when | Severity |
+|---|---|---|
+| R1 | Public table, RLS off, anon or authenticated can reach it (Supabase default grants modeled) | critical with tenant column, else high |
+| R2 | Permissive policy for public, anon or authenticated with `true` on a tenant table | high |
+| R5 | SECURITY DEFINER function on a tenant table, callable by an API role, with no `auth.uid()`/`auth.jwt()` check | high if anon can call it |
+| R6 | Policy on a tenant table that only checks sign-in (`auth.role() = 'authenticated'`, `auth.uid() IS NOT NULL`) | high |
+| R7 | Policy reads `user_metadata` (user-editable) | high |
+| R8 | SECURITY DEFINER function with no fixed `search_path` | medium |
+| R9 | Public view without `security_invoker`, readable by anon or authenticated | high |
+| L1-L4 | Live catalog versions of R1, R2, R9, R8 (read-only) | as above |
+| L5 | Anon key read a row from a tenant table | critical |
+
+R3 (no write policy) is not a finding: RLS with no policy denies the write. R4 is part of R1.
