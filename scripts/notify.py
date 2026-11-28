@@ -1,11 +1,12 @@
 """Slack alert for new high or critical findings, once per finding id. Stdlib only.
 Webhook URL file: ~/.config/cybersec-scan/slack_webhook (mode 600). No file: no post."""
 import json
+import os
 import pathlib
 import stat
 import urllib.request
 
-WEBHOOK = pathlib.Path.home() / ".config" / "cybersec-scan" / "slack_webhook"
+WEBHOOK = pathlib.Path(os.environ.get("CYBERSEC_WEBHOOK_FILE", pathlib.Path.home() / ".config" / "cybersec-scan" / "slack_webhook"))
 
 
 def webhook_url(path=WEBHOOK):

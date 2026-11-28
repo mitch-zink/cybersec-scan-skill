@@ -27,7 +27,8 @@ while IFS= read -r repo; do
            --max-budget-usd "${CYBERSEC_DAILY_BUDGET_USD:-5}" >> "$LOG" 2>&1 ); then
     res=$(python3 "$PY" notify "$repo" 2>> "$LOG")
     tag=OK; [ -f "$repo/.cybersec/needs_full" ] && tag=NEEDS_FULL
-    echo "$(ts) $tag $repo $(printf '%s' "$res" | python3 -c 'import json,sys; r=json.load(sys.stdin); print(f"new_high={r[\"new_high\"]} notified={r[\"notified\"]}" + (f" skipped={r[\"skipped\"]}" if r.get("skipped") else ""))' 2>/dev/null)" >> "$LOG"
+    summary=$(printf '%s' "$res" | python3 -c 'import json,sys; r=json.load(sys.stdin); print("new_high=%s notified=%s%s" % (r["new_high"], r["notified"], " skipped=" + r["skipped"] if r.get("skipped") else ""))' 2>/dev/null)
+    echo "$(ts) $tag $repo $summary" >> "$LOG"
     ok=$((ok + 1))
   else
     echo "$(ts) FAIL $repo" >> "$LOG"; fail=$((fail + 1))
