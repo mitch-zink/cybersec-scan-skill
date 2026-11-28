@@ -10,6 +10,10 @@
   batch-reset ROOT                     start a new full review
   batch-next ROOT [--max-bytes N] [--max-files N] [--priority-only]   choose the next files
   batch-done ROOT                      record the last batch as read
+  live ROOT                            tools plus read-only live database checks
+  notify ROOT                          Slack alert for new high or critical findings (once per id)
+  sarif ROOT OUT                       SARIF 2.1.0 file of open findings
+  stats ROOT [--md]                    verdict counts and precision per source
   verdict ROOT ID VALUE [REASON]       owner only: real | false_positive | accepted_risk | new
   prereqs                              tool paths
 """
@@ -28,6 +32,8 @@ sys.path.insert(0, str(HERE))
 import batching  # noqa: E402
 import config  # noqa: E402
 import live  # noqa: E402
+import notify  # noqa: E402
+import sarif  # noqa: E402
 import sql_state  # noqa: E402
 import symbols  # noqa: E402
 import tools  # noqa: E402
@@ -327,7 +333,7 @@ def merge(root, candidates_file, scope_file=None):
             fixed.append(dict(f, status="fixed", fixed_reason="evidence gone from file"))
         else:
             carried.append(dict(f, status="open"))
-    tool_prev = [dict(f, status="open") for f in prev.values() if source_of(f) in TOOL_SOURCES]
+    tool_prev = [f for f in prev.values() if source_of(f) in TOOL_SOURCES]   # tools own their status
     everything = apply_verdicts(root, good + carried + tool_prev)
     write_json(p(root, "findings"), everything)
     notes = [f"Fixed in this merge: {len(fixed)}.", f"Merge rejected {len(rejected)} candidates (not verifiable)."]
@@ -504,6 +510,26 @@ def batch_done(root):
     return 0
 
 
+def stats(root, md=False):
+    """Verdict counts per source; precision = real / (real + false_positive). Fixed findings excluded."""
+    rows = {}
+    for f in read_json(p(root, "findings"), []):
+        r = rows.setdefault(source_of(f), {"findings": 0, "real": 0, "false_positive": 0, "accepted_risk": 0, "unreviewed": 0})
+        r["findings"] += 1
+        r[f.get("verdict", "new") if f.get("verdict", "new") != "new" else "unreviewed"] += 1
+    for r in rows.values():
+        d = r["real"] + r["false_positive"]
+        r["precision"] = f"{r['real'] / d:.2f}" if d else "n/a"
+    if md:
+        cols = ["findings", "real", "false_positive", "accepted_risk", "unreviewed", "precision"]
+        print("| Source | " + " | ".join(cols) + " |\n|" + "---|" * (len(cols) + 1))
+        for src, r in sorted(rows.items()):
+            print(f"| {src} | " + " | ".join(str(r[c]) for c in cols) + " |")
+    else:
+        out(rows)
+    return 0
+
+
 def verdict(root, fid, value, reason=""):
     if value not in ("real", "false_positive", "accepted_risk", "new"):
         out({"ok": False, "reason": "value must be real, false_positive, accepted_risk, or new"})
@@ -519,6 +545,9 @@ def main(argv):
     ap = argparse.ArgumentParser(prog="cyber_state")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("live").add_argument("root")
+    sub.add_parser("notify").add_argument("root")
+    st = sub.add_parser("stats"); st.add_argument("root"); st.add_argument("--md", action="store_true")
+    sa = sub.add_parser("sarif"); sa.add_argument("root"); sa.add_argument("out")
     for name in ("discover", "incr", "state", "batch-reset", "batch-done"):
         sub.add_parser(name).add_argument("root")
     s = sub.add_parser("save"); s.add_argument("root"); s.add_argument("mode"); s.add_argument("read_count", type=int, nargs="?")
@@ -545,6 +574,9 @@ def main(argv):
         "merge": lambda: merge(a.root, a.candidates_file, a.scope),
         "tools": lambda: scan_tools(a.root, history=not a.no_history, fail_on=a.fail_on),
         "live": lambda: scan_tools(a.root, history=False, force_live=True),
+        "notify": lambda: out(notify.run(a.root, read_json(p(a.root, "findings"), []))) or 0,
+        "stats": lambda: stats(a.root, a.md),
+        "sarif": lambda: write_json(a.out, sarif.build(read_json(p(a.root, "findings"), []))) or 0,
         "batch-reset": lambda: batch_reset(a.root),
         "batch-next": lambda: batch_next(a.root, a.max_files, a.priority_only, a.max_bytes),
         "batch-done": lambda: batch_done(a.root),

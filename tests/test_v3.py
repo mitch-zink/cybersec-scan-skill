@@ -290,6 +290,81 @@ class BatchTests(Fixture):
                                   "lines": "4-4", "evidence": "x", "severity": "high"}]))
 
 
+HIGH = {"id": "F-aaaaaaaaaaaa", "source": "gitleaks", "class": "CWE-798", "severity": "high", "status": "new",
+        "verdict": "new", "file": "app/k.py", "lines": "1-1", "evidence": "aws-access-token app/k.py:1", "fix_hint": "Rotate."}
+
+
+class OpsTests(unittest.TestCase):
+    def test_notify_posts_once(self):
+        import http.server
+        import threading
+        import notify
+        posts = []
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                posts.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        root = pathlib.Path(tempfile.mkdtemp(), "repo")
+        (root / ".cybersec").mkdir(parents=True)
+        hook = root.parent / "slack_webhook"
+        hook.write_text(f"http://127.0.0.1:{srv.server_port}/hook")
+        hook.chmod(0o600)
+        try:
+            first = notify.run(root, [HIGH], hook)
+            second = notify.run(root, [HIGH], hook)
+        finally:
+            srv.shutdown()
+        self.assertEqual((first["notified"], second["notified"]), (1, 0))
+        self.assertEqual(len(posts), 1)
+        self.assertIn("[high] CWE-798 app/k.py:1-1 (gitleaks)", posts[0]["text"])
+
+    def test_notify_mode_check(self):
+        import notify
+        hook = pathlib.Path(tempfile.mkdtemp(), "slack_webhook")
+        hook.write_text("http://127.0.0.1:9/hook")
+        hook.chmod(0o644)
+        self.assertEqual(notify.webhook_url(hook), (None, "mode"))
+        root = pathlib.Path(tempfile.mkdtemp())
+        (root / ".cybersec").mkdir()
+        self.assertEqual(notify.run(root, [HIGH], hook)["skipped"], "mode")
+
+    def test_sarif(self):
+        import sarif
+        doc = sarif.build([HIGH, dict(HIGH, id="F-b", verdict="false_positive"), dict(HIGH, id="F-c", status="fixed")])
+        self.assertEqual(doc["version"], "2.1.0")
+        res = doc["runs"][0]["results"]
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["level"], "error")
+        self.assertEqual(res[0]["locations"][0]["physicalLocation"]["region"]["startLine"], 1)
+        self.assertEqual(res[0]["partialFingerprints"]["cybersecId/v1"], HIGH["id"])
+        self.assertEqual(doc["runs"][0]["tool"]["driver"]["rules"][0]["id"], "gitleaks:CWE-798")
+
+
+class OpsFixtureTests(Fixture):
+    def test_fail_on(self):
+        import subprocess
+        self.assertEqual(run_cli("tools", self.repo, "--no-history", "--fail-on", "high")[0], 6)   # seeded secret, new
+        self.assertEqual(run_cli("tools", self.repo, "--no-history", "--fail-on", "high")[0], 0)   # now open, not new
+        self.assertEqual(run_cli("tools", self.repo, "--no-history")[0], 0)
+
+    def test_stats(self):
+        p = pathlib.Path(self.repo, ".cybersec", "last_findings.json")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps([dict(HIGH, id="a", verdict="real"), dict(HIGH, id="b", verdict="false_positive"),
+                                 dict(HIGH, id="c"), dict(HIGH, id="d", source="agent", verdict="accepted_risk")]))
+        rows = json.loads(run_cli("stats", self.repo)[1])
+        self.assertEqual(rows["gitleaks"], {"findings": 3, "real": 1, "false_positive": 1, "accepted_risk": 0,
+                                            "unreviewed": 1, "precision": "0.50"})
+        self.assertEqual(rows["agent"]["precision"], "n/a")
+
+
 class ConfigTests(unittest.TestCase):
     def test_config_verify_jwt(self):
         samples = str(pathlib.Path(__file__).resolve().parent.parent / "rules" / "samples")
