@@ -20,6 +20,7 @@
 | streaming-ingest-poc full AI scan | n/a | 13 of 13 files, state saved, 0 rejected candidates, 0 permission denials, $0.48 |
 | Daily job, repo with no state | could start a full AI scan | NEEDS_FULL, no full scan, one alert, repo files unchanged |
 | Slack alert (local webhook) | none | one post on the first run, none on the second |
+| job-bot full AI review (run-full.sh) | not possible (never completed) | Stopped by the owner at 27 of 42 batches: 620 of 1,321 files, 0 rejected candidates; found and fixed non-CWE classes in agent output |
 | Unattended `claude -p` cost, tools mode | $1.03 (all user MCP servers loaded) | $0.056 with `--strict-mcp-config` |
 
 ## Defects found during the build

@@ -120,7 +120,7 @@ System Settings > Privacy and Security > Full Disk Access > add `/bin/bash`.
 
 | Gate | Meaning |
 |---|---|
-| `unit_tests`, `regressions` | All unit tests and the 20 v2 regression tests pass |
+| `unit_tests`, `regressions` | All 22 unit tests and 21 regression tests (20 v2 defects plus agent-output checks) pass |
 | `recall_all_planted` | Every planted bug in a seeded project is found |
 | `no_false_alarm_safe_code` | Safe code and test files are not reported |
 | `no_r2_on_service_role` | Policies limited to the server role are not flagged |
