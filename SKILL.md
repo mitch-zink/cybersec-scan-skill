@@ -38,6 +38,8 @@ If a call is denied, do not stop: check the command against the line above and r
 4. Write all candidates as one JSON array to `.cybersec/candidates.json`:
    `{"class","owasp","file","lines","symbol","evidence","severity","confidence","control_checked","fix_hint"}`
    - `evidence`: an exact copy of text in the file, at most 200 characters.
+   - `class`: a CWE id only, for example `CWE-639`. Put T1-T12 or other labels in `fix_hint`.
+   - `severity`: critical, high, medium or low. `confidence`: confirmed or likely.
    - `symbol`: the enclosing function or class.
    - `control_checked`: 10 to 300 characters. What control you searched for, where, and why it does not block.
 

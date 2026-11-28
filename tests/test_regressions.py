@@ -173,6 +173,14 @@ class Reg(Fixture):
         self.assertEqual(res["findings"], [])
         self.assertEqual(res["rejected"][0]["reason"], "evidence-not-in-file")
 
+    def test_class_must_be_cwe_and_enums_normalized(self):
+        base = {"file": "app/search.py", "lines": "4-4", "evidence": "db.execute(",
+                "control_checked": "Looked for a bound parameter in find(); none found."}
+        res = json.loads(run_cli("merge", self.repo, self.cands(dict(base, **{"class": "Injection: unescaped"})))[1])
+        self.assertEqual(res["rejected"][0]["reason"], "bad-class")
+        res = json.loads(run_cli("merge", self.repo, self.cands(dict(base, **{"class": "CWE-89", "confidence": "high", "severity": "severe"})))[1])
+        self.assertEqual((res["findings"][0]["confidence"], res["findings"][0]["severity"]), ("likely", "medium"))
+
     # ---- SQL (S10, S11, S12)
     def test_b9_sql_meta_sums_folders(self):
         for sub, t in (("a/migrations", "x"), ("b/migrations", "y")):

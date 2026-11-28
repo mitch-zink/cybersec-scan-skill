@@ -294,6 +294,8 @@ def check_candidate(root, c):
         return "bad-lines"
     if not 10 <= len(c["control_checked"]) <= 300:
         return "no-control-check"
+    if not re.fullmatch(r"CWE-\d+", str(c["class"]).strip()):
+        return "bad-class"
     return None
 
 
@@ -317,7 +319,8 @@ def merge(root, candidates_file, scope_file=None):
             rejected.append({"index": i, "file": c.get("file", ""), "reason": why})
             continue
         good.append({"source": "agent", "class": c["class"], "owasp": c.get("owasp", ""),
-                     "severity": c.get("severity", "medium"), "confidence": c.get("confidence", "likely"),
+                     "severity": c.get("severity") if c.get("severity") in SEV_RANK else "medium",
+                     "confidence": c.get("confidence") if c.get("confidence") in ("confirmed", "likely") else "likely",
                      "scope": "current", "file": c["file"], "lines": c["lines"], "evidence": c["evidence"],
                      "symbol": c.get("symbol", ""), "control_checked": c["control_checked"],
                      "fix_hint": c.get("fix_hint", "")})
