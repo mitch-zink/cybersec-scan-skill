@@ -32,6 +32,8 @@ Use the Write tool for every file. Shell use is limited to `git` and `python3`.
 1. `python3 ... discover .` Use `files` as the read list. If `over_cap` is true, stop (see Limits).
 2. Read each file in list order. Check every class in `${CLAUDE_SKILL_DIR}/docs/checklist.md` (OWASP 2025 A01 to A10, plus secrets).
    Apply its "Do not report" rules and confidence labels. Do not run the scanned code.
+   Run the multi-tenant checks (T1 to T12) and the SQL and RLS pass in the same file.
+   Read migration and schema files directly. Do not depend on the code graph for SQL.
 3. Write each candidate as one object: `{"class","owasp","file","lines","evidence","severity","confidence","fix_hint"}`.
    Evidence is an exact copy of text in the cited lines, at most 200 characters, no ellipsis. The helper uses it to decide fixed versus open.
 4. Self-check: re-read the cited lines. Drop a candidate if its quote is not there or the class does not fit. Count drops.
