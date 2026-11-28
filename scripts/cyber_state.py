@@ -19,6 +19,10 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tools  # noqa: E402
+TOOL_SOURCES = ("osv", "gitleaks")
+
 SKIP_DIRS = {"node_modules", ".git", "dist", "build", ".next", "vendor",
              "__pycache__", ".venv", ".cybersec"}
 SKIP_SUFFIXES = (".lock",)
@@ -239,7 +243,7 @@ def merge(root, candidates_file, scope_file=None):
     now_ids = {f["id"] for f in out}
     fixed, carried = [], []
     for i, f in prev.items():
-        if i in now_ids:
+        if i in now_ids or f.get("source") in TOOL_SOURCES:
             continue
         in_scope = scope is None or f["file"] in scope
         gone = not evidence_present(root, f["file"], f["evidence"])
@@ -247,10 +251,56 @@ def merge(root, candidates_file, scope_file=None):
             fixed.append(dict(f, status="fixed"))
         else:
             carried.append(dict(f, status="open"))
-    out += carried
+    out += carried + [dict(f, status="open") for f in prev.values() if f.get("source") in TOOL_SOURCES]
     prev_path.parent.mkdir(parents=True, exist_ok=True)
     prev_path.write_text(json.dumps(out, indent=2))
     print(json.dumps({"findings": out, "fixed": fixed}, indent=2))
+    return 0
+
+
+def tools_run(root):
+    """Run osv-scanner and gitleaks on the whole repo. Tool results replace earlier tool results."""
+    root = str(pathlib.Path(root).resolve())
+    prev_path = pathlib.Path(root, FINDINGS_REL)
+    prev = json.loads(prev_path.read_text()) if prev_path.exists() else []
+    prev_by = {f["id"]: f for f in prev}
+    ok_osv, osv = tools.osv_findings(root)
+    ok_gl, gl = tools.gitleaks_findings(root)
+    ran = {"osv": ok_osv, "gitleaks": ok_gl}
+    taken, out, now = set(), [], set()
+    for c in osv + gl:
+        fid = finding_id(c["class"], c["file"], c["evidence"], taken)
+        now.add(fid)
+        out.append(dict(c, id=fid, status="open" if fid in prev_by else "new"))
+    fixed = []
+    for f in prev:
+        if f.get("source") not in TOOL_SOURCES or f["id"] in now:
+            continue
+        if ran[f["source"]]:
+            fixed.append(dict(f, status="fixed"))
+        else:
+            out.append(dict(f, status="open"))  # tool did not run: keep the old result
+    out += [dict(f, status="open") for f in prev if f.get("source", "agent") == "agent"]
+    prev_path.parent.mkdir(parents=True, exist_ok=True)
+    prev_path.write_text(json.dumps(out, indent=2))
+    d = pathlib.Path(root, ".cybersec", "reports", datetime.date.today().isoformat() + "-tools")
+    d.mkdir(parents=True, exist_ok=True)
+    everything = out + fixed
+    (d / "findings.json").write_text(json.dumps(everything, indent=2))
+    notes = [
+        f"osv-scanner: {'ran' if ok_osv else 'NOT RUN (install: brew install osv-scanner)'}; "
+        f"{len(osv)} CVE findings (medium and above). Low severity not listed.",
+        f"gitleaks: {'ran' if ok_gl else 'NOT RUN (install: brew install gitleaks)'}; "
+        f"{len(gl)} secret findings. Secret values are never stored.",
+        f"Agent findings from earlier runs carried over: {sum(1 for f in out if f.get('source','agent')=='agent')}.",
+        f"Fixed since last tool run: {len(fixed)}.",
+    ]
+    meta = {"repo": pathlib.Path(root).name, "mode": "TOOLS",
+            "date": tools.utc_now(), "scanners": "osv-scanner, gitleaks"}
+    tools.build_html(everything, meta, notes, d / "report.html")
+    print(json.dumps({"osv": ok_osv, "gitleaks": ok_gl, "new": sum(f["status"] == "new" for f in out),
+                      "open": sum(f["status"] == "open" for f in out), "fixed": len(fixed),
+                      "report": str(d / "report.html")}))
     return 0
 
 
@@ -260,6 +310,8 @@ def main(argv):
     sub.add_parser("discover").add_argument("root")
     sub.add_parser("incr").add_argument("root")
     sub.add_parser("state").add_argument("root")
+    sub.add_parser("tools").add_argument("root")
+    sub.add_parser("prereqs")
     s = sub.add_parser("save")
     s.add_argument("root")
     s.add_argument("mode")
@@ -274,6 +326,11 @@ def main(argv):
         return 0
     if a.cmd == "incr":
         return incr(a.root)
+    if a.cmd == "tools":
+        return tools_run(a.root)
+    if a.cmd == "prereqs":
+        print(json.dumps(tools.prereqs()))
+        return 0
     if a.cmd == "state":
         st = load_state(a.root)
         print(json.dumps(st))
