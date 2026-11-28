@@ -254,6 +254,23 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(hits - expected, set(), "rules that fired unexpectedly")
 
 
+class SqlRoleTests(unittest.TestCase):
+    def test_service_role_only_policy_not_flagged_but_public_is(self):
+        import sql_state, tempfile
+        d = tempfile.mkdtemp()
+        pathlib.Path(d, "0001.sql").write_text(
+            "CREATE TABLE public.a (id uuid, tenant_id uuid);\n"
+            "ALTER TABLE public.a ENABLE ROW LEVEL SECURITY;\n"
+            "CREATE POLICY a_srv ON public.a FOR ALL TO service_role USING (true) WITH CHECK (true);\n"
+            "CREATE TABLE public.b (id uuid, tenant_id uuid);\n"
+            "ALTER TABLE public.b ENABLE ROW LEVEL SECURITY;\n"
+            "CREATE POLICY b_open ON public.b FOR ALL TO authenticated USING (true);\n")
+        f, _ = sql_state.findings(d)
+        hit = {x["file"] + " " + x["evidence"].split(" ")[1] for x in f if x["evidence"].startswith("R2")}
+        self.assertFalse(any(" a" in h for h in hit))
+        self.assertTrue(any("b" in h for h in hit))
+
+
 class SqlReplayTests(unittest.TestCase):
     def test_replay_flags_open_policy_leak_and_grant(self):
         import sql_state

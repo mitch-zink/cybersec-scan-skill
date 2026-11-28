@@ -96,8 +96,10 @@ def replay(migration_dir):
                 cmd = (re.search(r"\bFOR\s+(\w+)", rest, re.I) or [None, "ALL"])[1].upper() if re.search(r"\bFOR\s+", rest, re.I) else "ALL"
                 using = re.search(r"\bUSING\s*\((.*?)\)\s*(WITH|$)", rest, re.I | re.S)
                 check = re.search(r"\bWITH\s+CHECK\s*\((.*)\)", rest, re.I | re.S)
+                to = re.search(r"\bTO\s+(.*?)(?=\bUSING\b|\bWITH\s+CHECK\b|$)", rest, re.I | re.S)
+                roles = sorted({r.strip().strip('"').lower() for r in to.group(1).split(",")}) if to else ["public"]
                 tables[_name(m.group(2))]["policies"].append({
-                    "name": m.group(1).strip('"'), "cmd": cmd,
+                    "name": m.group(1).strip('"'), "cmd": cmd, "roles": roles,
                     "using": (using.group(1).strip() if using else ""),
                     "check": (check.group(1).strip() if check else ""), "where": where})
                 continue
@@ -141,6 +143,8 @@ def findings(migration_dir):
             add("R1", "CWE-284", "A01", "high", name, t, f"RLS off, tenant column {tenant[0]}",
                 f"ALTER TABLE {name} ENABLE ROW LEVEL SECURITY and add policies.")
         for p in t["policies"]:
+            if p["roles"] == ["service_role"]:
+                continue   # server-only policy: the service key is already trusted
             for field in ("using", "check"):
                 if re.fullmatch(r"\s*true\s*", p[field], re.I):
                     add("R2", "CWE-863", "A01", "high", name, t, f"policy {p['name']} {field.upper()} (true)",
