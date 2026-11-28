@@ -421,6 +421,96 @@ class ConfigTests(unittest.TestCase):
                          [("supabase/config.toml", "1", "verify_jwt = false for function open-hook")])
 
 
+LINT = {"name": "auth_rls_initplan", "title": "Auth RLS Initialization Plan", "level": "WARN", "facing": "EXTERNAL",
+        "categories": ["PERFORMANCE"], "description": "Re-evaluates auth.uid() per row.", "detail": "Table public.t policy p",
+        "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0003_auth_rls_initplan",
+        "metadata": {}, "cache_key": "auth_rls_initplan_public_t_p"}
+MINI_SPLINTER = ("set local search_path = '';\ndo $$ begin perform 1; end $$;\n\n(\nselect 'a' as name)\nunion all\n(\nselect 'b')")
+
+
+class SupabaseTests(unittest.TestCase):
+    def test_advisors_api(self):
+        import http.server
+        import threading
+        import supabase_checks as sc
+        seen = []
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append((self.path, self.headers.get("Authorization")))
+                body = {"lints": [LINT] if self.path.endswith("/performance") else
+                        [dict(LINT, name="rls_disabled_in_public", level="ERROR", categories=["SECURITY"], cache_key="rls_x")]}
+                self.send_response(200); self.end_headers(); self.wfile.write(json.dumps(body).encode())
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        old = sc.API
+        sc.API = f"http://127.0.0.1:{srv.server_port}" + "/v1/projects/{ref}/advisors/{kind}"
+        os.environ["SUPABASE_ACCESS_TOKEN"] = "pat-test"
+        try:
+            st, f, notes = sc.run("/x", {"supabase": {}}, "https://abcdefghijklmnopqrst.supabase.co", "", "abcdefghijklmnopqrst.supabase.co")
+        finally:
+            sc.API = old
+            del os.environ["SUPABASE_ACCESS_TOKEN"]
+            srv.shutdown()
+        self.assertEqual(st["advisors"], "ran")
+        self.assertEqual(sorted((x["rule"], x["severity"], x["owasp"]) for x in f),
+                         [("auth_rls_initplan", "medium", "PERF"), ("rls_disabled_in_public", "high", "A02")])
+        self.assertEqual({p for p, _ in seen}, {"/v1/projects/abcdefghijklmnopqrst/advisors/security",
+                                                "/v1/projects/abcdefghijklmnopqrst/advisors/performance"})
+        self.assertNotIn("pat-test", json.dumps(f))
+
+    def test_splinter_script_and_checksum(self):
+        import supabase_checks as sc
+        script = sc.splinter_script(MINI_SPLINTER)
+        self.assertTrue(script.startswith("begin read only;\nset local search_path"))
+        self.assertIn("select coalesce(json_agg(x), '[]') from ((\nselect 'a' as name)\nunion all\n(\nselect 'b')) x;", script)
+        self.assertTrue(script.rstrip().endswith("commit;"))
+        cache = pathlib.Path(tempfile.mkdtemp())
+        (cache / "splinter-2026.11.0.sql").write_text("tampered")
+        with self.assertRaises(RuntimeError):
+            sc.splinter_sql(cache)
+
+    def test_health_findings(self):
+        import supabase_checks as sc
+        rows = {"cache_hit": [{"ratio": 0.85}], "seq_scans": [{"t": "big", "seq_scan": 900, "idx_scan": 0, "rows": 50000}],
+                "slow_queries": [{"q": "select 1", "calls": 20, "mean_ms": 900}], "long_running": [], "dead_tuples": None,
+                "connections": [{"used": 90, "max": 100}]}
+        f = sc.health_findings(rows, "h")
+        self.assertEqual(sorted((x["rule"], x["severity"]) for x in f),
+                         [("cache_hit", "medium"), ("connections", "high"), ("seq_scans", "medium"), ("slow_queries", "medium")])
+
+    def test_psql_path_runs_splinter_and_health_read_only(self):
+        import supabase_checks as sc
+        d = tempfile.mkdtemp()
+        log = os.path.join(d, "calls.log")
+        fake = pathlib.Path(d, "psql")
+        fake.write_text(f"""#!/usr/bin/env python3
+import os, sys, json
+script = sys.stdin.read()
+open({log!r}, "a").write(os.environ.get("PGOPTIONS", "") + "|" + script[:40].replace("\\n", " ") + "\\n")
+if "begin read only" in script:
+    print(json.dumps([{json.dumps(LINT)}]))
+elif "heap_blks_hit" in script:
+    print('[{{"ratio": 0.5}}]')
+else:
+    print('[]')
+""")
+        fake.chmod(0o755)
+        old_path, old_sql = os.environ["PATH"], sc.splinter_sql
+        os.environ["PATH"] = d + os.pathsep + old_path
+        sc.splinter_sql = lambda cache=None: MINI_SPLINTER
+        try:
+            st, f, notes = sc.run("/x", {"supabase": {}}, "", "postgresql://ro@localhost/db", "localhost")
+        finally:
+            os.environ["PATH"], sc.splinter_sql = old_path, old_sql
+        self.assertEqual((st["advisors"], st["dbhealth"]), ("ran", "ran"))
+        self.assertEqual(sorted(x["rule"] for x in f), ["auth_rls_initplan", "cache_hit"])
+        self.assertTrue(all("default_transaction_read_only=on" in ln for ln in open(log).read().splitlines()))
+
+
 class ScannerParseTests(unittest.TestCase):
     def test_zizmor_parse(self):
         f = tools.parse_zizmor("/repo", json.loads((DATA / "zizmor.json").read_text()))

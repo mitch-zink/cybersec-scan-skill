@@ -12,6 +12,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import supabase_checks
+
 TENANT = "array['tenant_id','org_id','workspace_id','account_id','user_id']"
 HAS_TENANT = f"exists (select 1 from pg_attribute a where a.attrelid = c.oid and a.attname = any({TENANT}) and not a.attisdropped)"
 PUB = "from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public'"
@@ -136,4 +138,8 @@ def run(root, cfg, sql_findings, sql_rows):
             notes.append(f"Live catalog (read-only): {len(f)} findings. Replay results disproved by live: {len(drop)} removed.")
     else:
         st["live-catalog"] = "off"
-    return st, out, drop, notes
+    sb_st, sb_f, sb_notes = supabase_checks.run(root, cfg, url, dsn, host)
+    st.update(sb_st)
+    if sb_st.get("advisors") == "ran":              # advisors cover RLS off, definer views and search_path
+        out = [f for f in out if f["rule"] not in ("L1", "L3", "L4")]
+    return st, out + sb_f, drop, notes + sb_notes

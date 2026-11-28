@@ -4,7 +4,7 @@
 |---|---|---|
 | Unit | `python3 tests/test_cyber_state.py` | 22 passed |
 | Regressions (20 v2 defects) | `python3 tests/test_regressions.py` | 21 passed (20 v2 defects, all failed on v2, plus agent-output checks) |
-| v3 steps | `python3 tests/test_v3.py` | 37 passed |
+| v3 steps | `python3 tests/test_v3.py` | 41 passed |
 | Bench gates | `python3 scripts/bench.py` | 9 of 9 true |
 | AI bench | `python3 scripts/bench.py --ai` | recall 10 of 10, 0 false alarms in 6 safe twins |
 
@@ -72,3 +72,12 @@ Repo-specific finding details are not recorded here. This repo is public.
 | Replay models `FOR r IN SELECT ... FROM pg_proc ... LOOP GRANT/REVOKE` (filters: `prosecdef`, `proname IN`, `proname LIKE`) | 14 | 8 (no true hit lost) |
 
 The 6 left were created after the last sweep; the live catalog says no API role can call them. Live mode removes them.
+
+## Supabase-native checks: real query validation (job-bot, read-only)
+
+| Check | Result on job-bot |
+|---|---|
+| Health queries (cache hit, seq scans, long-running, dead tuples, connections) | All ran. Table cache hit 0.855 (target 0.99); `market_title_stats_mv` 14,681 seq scans, 0 index scans, 159k rows |
+| Slow queries (`extensions.pg_stat_statements`) | Ran. 10 found, for example a queue tick at 55 s mean over 2,808 calls |
+| splinter.sql wrapper (first 2 lints, run as-is) | Columns parse into findings: 23 unindexed foreign keys, 0 exposed `auth.users` |
+| No credential set | `advisors: NOT RUN (set SUPABASE_ACCESS_TOKEN, or CYBERSEC_DB_URL for splinter.sql)` |

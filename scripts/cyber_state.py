@@ -41,7 +41,8 @@ import tools  # noqa: E402
 
 FULL_CAP = 150          # max files per batch
 READ_CAP = 200          # incremental read set cap
-TOOL_SOURCES = ("osv", "gitleaks", "gitleaks-history", "semgrep", "sql", "config", "zizmor", "trivy", "live")
+TOOL_SOURCES = ("osv", "gitleaks", "gitleaks-history", "semgrep", "sql", "config", "zizmor", "trivy", "live",
+                "advisors", "dbhealth")
 REL = {k: pathlib.PurePosixPath(".cybersec", v) for k, v in {
     "state": "state.json", "findings": "last_findings.json", "incr": "incr.json", "batch": "batch.json",
     "progress": "progress.json", "verdicts": "verdicts.json", "report": "report.html"}.items()}
@@ -378,6 +379,8 @@ def status_note(name, st, cfg):
     if st == "timeout":
         key = name.replace("-", "_")
         return f"{name}: NOT RUN (timeout after {cfg.get('timeout_' + key, 600)} s)"
+    if st == "missing" and name == "advisors":
+        return "advisors: NOT RUN (set SUPABASE_ACCESS_TOKEN, or CYBERSEC_DB_URL for splinter.sql)"
     if st == "missing" and name.startswith("live"):
         return f"{name}: NOT RUN ({'psql not installed' if name == 'live-catalog' else 'no URL or anon key; see [live] in config.toml'})"
     if st == "missing":
@@ -416,6 +419,7 @@ def scan_tools(root, history=True, fail_on="none", force_live=False):
     live_st, live_f, drop, live_notes = live.run(root, cfg, sql_f, sql_rows)
     ran.update(live_st)
     ran["live"] = "ran" if "ran" in live_st.values() else "off"
+    ran["advisors"], ran["dbhealth"] = live_st.pop("advisors", "off"), live_st.pop("dbhealth", "off")
     cands = [c for c in cands if c["id"] not in drop] + assign_ids(root, live_f)
     prev_ids = {f["id"] for f in prev}
     now = {c["id"] for c in cands}

@@ -15,6 +15,7 @@ DEFAULT = {"skip_tests": True, "osv_enrich": True, "secret_max_mb": 1,
            "timeout_osv": 600, "timeout_gitleaks": 600, "timeout_gitleaks_history": 1800,
            "timeout_semgrep": 900, "timeout_zizmor": 300, "timeout_trivy": 600,
            "sql": {"public_default_grants": True},
+           "supabase": {"access_token_env": "SUPABASE_ACCESS_TOKEN", "project_ref": ""},
            "live": {"enabled": False, "url_env": "VITE_SUPABASE_URL",
                     "anon_key_env": "VITE_SUPABASE_ANON_KEY", "db_url_env": "CYBERSEC_DB_URL"}}
 

@@ -17,6 +17,8 @@ It combines deterministic scanners with an AI reviewer. It never changes your co
 | Containers and IaC | Dockerfile, Terraform, Kubernetes, Helm misconfiguration | trivy config | Check ID, file, lines |
 | Database (Postgres or Supabase migrations) | RLS off (R1), open `true` policies (R2), unguarded SECURITY DEFINER functions (R5), sign-in-only policies (R6), `user_metadata` in policies (R7), no fixed `search_path` (R8), views without `security_invoker` (R9) | SQL replay | Final state of every table, view and function |
 | Database, live (opt-in) | Same rules on the real catalog (L1-L4); anon key can read rows of a tenant table (L5) | live mode, read-only | Replaces replay results it disproves |
+| Supabase advisors (opt-in, live) | All Supabase Security and Performance Advisor lints: RLS, exposed `auth.users`, definer views, mutable `search_path`, `auth_rls_initplan`, unindexed foreign keys, duplicate and unused indexes, multiple permissive policies, auth and network settings | Management API (`SUPABASE_ACCESS_TOKEN`), else [splinter.sql](https://github.com/supabase/splinter) 2026.11.0 through `psql` (`CYBERSEC_DB_URL`) | One finding per lint, with the Supabase remediation link |
+| Database health (opt-in, live) | Query optimizer health: cache hit ratio, sequential scans on large tables, slow queries (`pg_stat_statements`), long-running queries, dead tuples, connection use | `psql` (`CYBERSEC_DB_URL`) | Table or query, numbers, and the fix |
 | Logic, auth and tenant bugs | Broken access control, injection, auth bypass, cross-tenant leaks | AI reviewer, in batches | Finding with cited lines, the control it checked, and a fix hint |
 
 Test, fixture, mock, example and documentation files are skipped for code review by default. The secrets scan reads docs and markdown.
@@ -88,6 +90,15 @@ url_env = "VITE_SUPABASE_URL"          # read from the environment, else from .e
 anon_key_env = "VITE_SUPABASE_ANON_KEY"
 db_url_env = "CYBERSEC_DB_URL"         # optional: a read-only Postgres login for catalog checks
 ```
+
+Supabase checks run in live mode too:
+
+| Credential | What runs |
+|---|---|
+| `SUPABASE_ACCESS_TOKEN` (personal access token; project ref comes from the URL or `[supabase] project_ref`) | Security and Performance Advisors through the Management API |
+| `CYBERSEC_DB_URL` (read-only login) | splinter.sql (checksum-pinned) for the advisors when no token is set, plus the database health checks and catalog checks |
+
+When the advisors run, they replace the catalog checks L1, L3 and L4.
 
 The anon probe uses only the public anon key. Catalog checks need `psql` and a database URL; they run with `default_transaction_read_only=on`. Key and URL values are never written to findings or logs.
 
@@ -184,7 +195,7 @@ CI runs all test suites and the bench gates on every pull request (`.github/work
 | Source | What we took from it |
 |---|---|
 | [OWASP Top 10:2025](https://owasp.org/Top10/2025/) and [CWE](https://cwe.mitre.org/) | The classes the AI reviewer checks (A01-A10) and the class id on every finding |
-| [Supabase Security Advisor](https://supabase.com/docs/guides/monitoring-and-debugging/advisors) and its linter [splinter](https://github.com/supabase/splinter) | The database rules: RLS off in public (0013), security definer views (0010), mutable `search_path` (0011). Live checks L1-L4 use the same catalog facts |
+| [Supabase Security Advisor](https://supabase.com/docs/guides/monitoring-and-debugging/advisors), its linter [splinter](https://github.com/supabase/splinter) and [`supabase inspect db`](https://supabase.com/docs/guides/database/inspect) | The database rules (R1-R9), the advisor lints in live mode (Management API or splinter.sql), and the database health checks |
 | [OSV-Scanner](https://google.github.io/osv-scanner/) | Dependency CVEs and advisory groups |
 | [gitleaks](https://github.com/gitleaks/gitleaks) | Secrets in files and git history |
 | [Semgrep](https://semgrep.dev/docs/writing-rules/data-flow/taint-mode) | Code rules; taint mode for request data flows |
